@@ -17,9 +17,9 @@
 // Define custom parameters
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space)", "", 200);
 WiFiManagerParameter wm_nostr_npub("nostr_npub", "NPub", "", 100);
-WiFiManagerParameter wm_nostr_min_zap("nostr_min_zap", "Min Zap (milli sats)", "0", 19);
-WiFiManagerParameter wm_pin_number("pin_number", "PIN Number", "13", 2);
-WiFiManagerParameter wm_runtime("runtime", "Runtime (milliseconds)", "1000", 6);
+WiFiManagerParameter wm_nostr_min_zap("nostr_min_zap", "Min Zap (milli sats)", "", 19);
+WiFiManagerParameter wm_pin_number("pin_number", "PIN Number", "", 2);
+WiFiManagerParameter wm_runtime("runtime", "Runtime (milliseconds)", "", 6);
 
 // Preferences for storing configuration
 Preferences preferences;
@@ -397,7 +397,7 @@ void setup() {
   preferences.begin("config", true);
   String nostrRelaysStr = preferences.getString("nostr_relays", "");
   String nostrNpub = preferences.getString("nostr_npub", "");
-  pinNumber = preferences.getUShort("pin_number", INVALID_PIN_NUMBER);
+  pinNumber = preferences.getUShort("pin_number", 13);
   nostrMinZap = preferences.getULong("nostr_min_zap", 0);
   runtimeMs = preferences.getUInt("run_time", 1000);
   preferences.end();
