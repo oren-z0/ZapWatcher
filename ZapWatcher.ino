@@ -314,6 +314,16 @@ void kind9735Event(const std::string& key, const char* payload) {
     return;
   }
 
+  JsonVariantConst authorPubkey = kind9735Doc[2]["pubkey"];
+  if (!authorPubkey.is<const char*>()) {
+    Serial.println(F("kind9735Event: No author pubkey"));
+    return;
+  }
+  if (strcmp(authorPubkey, nostrWalletPubkey.c_str()) != 0) {
+    Serial.println(F("kind9735Event: Author pubkey is not the wallet pubkey, skipping"));
+    return;
+  }
+
   JsonVariantConst tags = kind9735Doc[2]["tags"];
   if (!tags.is<JsonArrayConst>()) {
     Serial.println(F("kind9735Event: No tags"));
