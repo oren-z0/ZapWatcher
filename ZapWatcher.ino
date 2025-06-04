@@ -20,7 +20,7 @@ WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space)
 WiFiManagerParameter wm_nostr_npub("nostr_npub", "NPub", "", 100);
 WiFiManagerParameter wm_nostr_min_zap("nostr_min_zap", "Min Zap (milli sats)", "", 19);
 WiFiManagerParameter wm_pin_number("pin_number", "PIN Number", "", 2);
-WiFiManagerParameter wm_runtime("runtime", "Runtime (milliseconds)", "", 6);
+WiFiManagerParameter wm_run_time("run_time", "Runtime (milliseconds)", "", 6);
 
 // Preferences for storing configuration
 Preferences preferences;
@@ -48,7 +48,7 @@ void onSaveParams() {
   nostrMinZap = nostrMinZapStr.toInt();
   String pinNumberStr = String(wm_pin_number.getValue());
   pinNumber = pinNumberStr == "" ? INVALID_PIN_NUMBER : pinNumberStr.toInt();
-  String runtimeMsStr = String(wm_runtime.getValue());
+  String runtimeMsStr = String(wm_run_time.getValue());
   runtimeMs = runtimeMsStr.toInt();
 
   preferences.begin("config", false);
@@ -428,7 +428,7 @@ void setup() {
   String pinNumberStr = (pinNumber == INVALID_PIN_NUMBER) ? "" : String(pinNumber);
   wm_pin_number.setValue(pinNumberStr.c_str(), 2);
   String runtimeMsStr = String(runtimeMs);
-  wm_runtime.setValue(runtimeMsStr.c_str(), 6);
+  wm_run_time.setValue(runtimeMsStr.c_str(), 6);
 
   // Initialize WiFiManager
   WiFiManager wm;
@@ -438,7 +438,7 @@ void setup() {
   wm.addParameter(&wm_nostr_npub);
   wm.addParameter(&wm_nostr_min_zap);
   wm.addParameter(&wm_pin_number);
-  wm.addParameter(&wm_runtime);
+  wm.addParameter(&wm_run_time);
 
   // Set timeout for configuration portal
   wm.setConfigPortalTimeout(180); // 3 minutes timeout
