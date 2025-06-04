@@ -29,7 +29,7 @@ NostrEvent nostr;
 NostrRelayManager nostrRelayManager;
 
 String nostrPubkey = "";
-String walletNostrPubkey = "";
+String nostrWalletPubkey = "";
 int pinNumber = INVALID_PIN_NUMBER;
 int runtimeMs = 0;
 long nostrMinZap = 0;
@@ -256,24 +256,24 @@ void kind0Event(const std::string& key, const char* payload) {
   String username = lud16Str.substring(0, at_index);
   String domain = lud16Str.substring(at_index + 1);
 
-  String newWalletNostrPubkey = getNostrWalletPubkey(domain, username);
-  if (newWalletNostrPubkey.length() == 0) {
+  String newNostrWalletPubkey = getNostrWalletPubkey(domain, username);
+  if (newNostrWalletPubkey.length() == 0) {
     Serial.println(F("No new wallet nostr pubkey, skipping"));
     return;
   }
-  if (newWalletNostrPubkey == walletNostrPubkey) {
+  if (newNostrWalletPubkey == nostrWalletPubkey) {
     Serial.println(F("Nostr pubkey is the same as the previous wallet nostr pubkey"));
     return;
   }
-  walletNostrPubkey = newWalletNostrPubkey;
+  nostrWalletPubkey = newNostrWalletPubkey;
 
   Serial.print(F("New wallet nostr pubkey: "));
-  Serial.println(walletNostrPubkey);
+  Serial.println(nostrWalletPubkey);
 
   NostrRequestOptions* eventRequestOptions = new NostrRequestOptions();
 
   String authors[1];
-  authors[0] = walletNostrPubkey;
+  authors[0] = nostrWalletPubkey;
   eventRequestOptions->authors = authors;
   eventRequestOptions->authors_count = 1;
 
