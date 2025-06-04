@@ -13,6 +13,7 @@
 
 #define MIN_RELAYS (2)
 #define INVALID_PIN_NUMBER (0xFFFF)
+#define MAX_HTTP_RETRIES (600)
 
 // Define custom parameters
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space)", "", 200);
@@ -131,14 +132,16 @@ void okEvent(const std::string& key, const char* payload) {
   Serial.println(payload);
 }
 
-String getNostrPubkey(const String& domain, const String& username) {
+String getNostrWalletPubkey(const String& domain, const String& username) {
+  nostrRelayManager.disconnect();
   String url = "https://" + domain + "/.well-known/lnurlp/" + username;
 
   Serial.print(F("Sending GET request to: "));
   Serial.println(url);
 
   StaticJsonDocument<4098> responseDoc;
-  for (int attempt = 0; attempt < 600; attempt++) {
+  int httpAttempt = 0;
+  for (; httpAttempt < MAX_HTTP_RETRIES; httpAttempt++) {
     HTTPClient http;
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.begin(url);
@@ -162,6 +165,13 @@ String getNostrPubkey(const String& domain, const String& username) {
       continue;
     }
     break;
+  }
+  nostrRelayManager.connect();
+  if (httpAttempt >= MAX_HTTP_RETRIES) {
+    Serial.println(F("Failed to get nostr pubkey"));
+    ESP.restart();
+    delay(5000);
+    return "";
   }
   Serial.println(F("Response JSON:"));
   serializeJsonPretty(responseDoc, Serial);
@@ -246,7 +256,7 @@ void kind0Event(const std::string& key, const char* payload) {
   String username = lud16Str.substring(0, at_index);
   String domain = lud16Str.substring(at_index + 1);
 
-  String newWalletNostrPubkey = getNostrPubkey(domain, username);
+  String newWalletNostrPubkey = getNostrWalletPubkey(domain, username);
   if (newWalletNostrPubkey.length() == 0) {
     Serial.println(F("No new wallet nostr pubkey, skipping"));
     return;
@@ -304,17 +314,6 @@ void kind9735Event(const std::string& key, const char* payload) {
     return;
   }
 
-  JsonVariantConst createdAt = kind9735Doc[2]["created_at"];
-  if (!createdAt.is<int>()) {
-    Serial.println(F("kind9735Event: No created_at"));
-    return;
-  }
-  if (createdAt <= kind9735CreatedAt) {
-    Serial.println(F("kind9735Event: Event is not newer than previous kind9735 event"));
-    return;
-  }
-  kind9735CreatedAt = createdAt;
-
   JsonVariantConst tags = kind9735Doc[2]["tags"];
   if (!tags.is<JsonArrayConst>()) {
     Serial.println(F("kind9735Event: No tags"));
@@ -322,11 +321,20 @@ void kind9735Event(const std::string& key, const char* payload) {
   }
 
   JsonVariantConst bolt11;
+  bool foundRecipient = false;
   for (JsonVariantConst tag : tags.as<JsonArrayConst>()) {
-    if (tag[0].is<const char*>() && (strcmp(tag[0], "bolt11") == 0)) {
-      bolt11 = tag[1];
-      break;
+    if (!tag[0].is<const char*>()) {
+      continue;
     }
+    if (strcmp(tag[0], "bolt11") == 0) {
+      bolt11 = tag[1];
+    } else if (strcmp(tag[0], "p") == 0 && tag[1].is<const char*>() && (strcmp(tag[1], nostrNpubHex.c_str()) == 0)) {
+      foundRecipient = true;
+    }
+  }
+  if (!foundRecipient) {
+    Serial.println(F("kind9735Event: No recipient tag"));
+    return;
   }
   if (!bolt11.is<const char*>()) {
     Serial.println(F("kind9735Event: No bolt11 tag"));
@@ -382,6 +390,17 @@ void kind9735Event(const std::string& key, const char* payload) {
     return;
   }
 
+  JsonVariantConst createdAt = kind9735Doc[2]["created_at"];
+  if (!createdAt.is<int>()) {
+    Serial.println(F("kind9735Event: No created_at"));
+    return;
+  }
+  if (createdAt <= kind9735CreatedAt) {
+    Serial.println(F("kind9735Event: Event is not newer than previous kind9735 event"));
+    return;
+  }
+  kind9735CreatedAt = createdAt;
+
   digitalWrite(pinNumber, HIGH);
   if (runtimeMs > 0) {
     delay(runtimeMs);
@@ -399,7 +418,7 @@ void setup() {
   String nostrNpub = preferences.getString("nostr_npub", "");
   pinNumber = preferences.getUShort("pin_number", 13);
   nostrMinZap = preferences.getULong("nostr_min_zap", 0);
-  runtimeMs = preferences.getUInt("run_time", 1000);
+  runtimeMs = preferences.getUInt("run_time", 3000);
   preferences.end();
 
   wm_nostr_relays.setValue(nostrRelaysStr.c_str(), 200);
