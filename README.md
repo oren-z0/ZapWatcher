@@ -2,6 +2,10 @@
 
 An ESP32 project to trigger whenever your Nostr npub receives a zap.
 
+## Demo Video
+
+https://v.nostr.build/AWBK5iHwdn8CMR3U.mp4
+
 ## Installation instructions
 
 In your Arudino IDE, install the following packages:
