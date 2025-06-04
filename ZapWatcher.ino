@@ -28,7 +28,7 @@ Preferences preferences;
 NostrEvent nostr;
 NostrRelayManager nostrRelayManager;
 
-String nostrNpubHex = "";
+String nostrPubkey = "";
 String walletNostrPubkey = "";
 int pinNumber = INVALID_PIN_NUMBER;
 int runtimeMs = 0;
@@ -281,7 +281,7 @@ void kind0Event(const std::string& key, const char* payload) {
   eventRequestOptions->kinds = kinds;
   eventRequestOptions->kinds_count = 1;
 
-  String ps[] = {nostrNpubHex};
+  String ps[] = {nostrPubkey};
   eventRequestOptions->p = ps;
   eventRequestOptions->p_count = 1;
 
@@ -328,7 +328,7 @@ void kind9735Event(const std::string& key, const char* payload) {
     }
     if (strcmp(tag[0], "bolt11") == 0) {
       bolt11 = tag[1];
-    } else if (strcmp(tag[0], "p") == 0 && tag[1].is<const char*>() && (strcmp(tag[1], nostrNpubHex.c_str()) == 0)) {
+    } else if (strcmp(tag[0], "p") == 0 && tag[1].is<const char*>() && (strcmp(tag[1], nostrPubkey.c_str()) == 0)) {
       foundRecipient = true;
     }
   }
@@ -479,15 +479,15 @@ void setup() {
     return;
   }
   // Parsing values that are always saved as strings:
-  nostrNpubHex = npubToHex(nostrNpub);
-  if (nostrNpubHex.length() == 0 || nostrRelaysStr.length() == 0) {
+  nostrPubkey = npubToHex(nostrNpub);
+  if (nostrPubkey.length() == 0 || nostrRelaysStr.length() == 0) {
     Serial.println(F("No npub hex found or no relays found, restarting..."));
     delay(1000);
     ESP.restart();
     return;
   }
-  Serial.print(F("nostrNpubHex: "));
-  Serial.println(nostrNpubHex);
+  Serial.print(F("nostrPubkey: "));
+  Serial.println(nostrPubkey);
 
   // Split the string into a vector
   std::vector<String> nostrRelaysVector;
@@ -516,7 +516,7 @@ void setup() {
   NostrRequestOptions* eventRequestOptions = new NostrRequestOptions();
 
   String authors[1];
-  authors[0] = nostrNpubHex;
+  authors[0] = nostrPubkey;
   eventRequestOptions->authors = authors;
   eventRequestOptions->authors_count = 1;
 
