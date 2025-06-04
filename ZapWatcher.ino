@@ -177,12 +177,12 @@ String getNostrWalletPubkey(const String& domain, const String& username) {
   serializeJsonPretty(responseDoc, Serial);
   Serial.println();
 
-  JsonVariantConst nostrPubkey = responseDoc["nostrPubkey"];
-  if (!nostrPubkey.is<const char*>()) {
+  JsonVariantConst newNostrPubkey = responseDoc["nostrPubkey"];
+  if (!newNostrPubkey.is<const char*>()) {
     Serial.println(F("No nostrPubkey"));
     return "";
   }
-  return String(nostrPubkey);
+  return String(newNostrPubkey);
 }
 
 
