@@ -11,6 +11,8 @@
 #include <vector>  // Add this for std::vector
 #include <WiFiManager.h>  // https://github.com/tzapu/WiFiManager
 
+#define ZAPWATCHER_VERSION (1)
+
 #define MIN_RELAYS (2)
 #define INVALID_PIN_NUMBER (0xFFFF)
 #define MAX_HTTP_RETRIES (600)
@@ -508,7 +510,7 @@ void setup() {
   // Attempt to connect; if it fails, start configuration portal
   char ssid[32];
   uint64_t chipid = ESP.getEfuseMac();
-  snprintf(ssid, sizeof(ssid), "ZapWatcher %08X", (uint32_t)(chipid));
+  snprintf(ssid, sizeof(ssid), "ZapWatcher %08X v%d", (uint32_t)(chipid), ZAPWATCHER_VERSION);
   if (!wm.autoConnect(ssid)) {
     Serial.println(F("Failed to connect or hit timeout. Restarting..."));
     delay(3000);
