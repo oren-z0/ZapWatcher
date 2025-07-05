@@ -17,8 +17,9 @@
 
 // Define custom parameters
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space)", "", 200);
-WiFiManagerParameter wm_nostr_npub("nostr_npub", "NPub", "", 100);
+WiFiManagerParameter wm_nostr_recipient_npub("nostr_recipient_npub", "Recipient NPub", "", 64);
 WiFiManagerParameter wm_nostr_min_zap("nostr_min_zap", "Min Zap (milli sats)", "", 19);
+WiFiManagerParameter wm_nostr_sender_npub("nostr_sender_npub", "Sender NPub", "", 64);
 WiFiManagerParameter wm_pin_number("pin_number", "PIN Number", "", 2);
 WiFiManagerParameter wm_run_time("run_time", "Runtime (milliseconds)", "", 6);
 
@@ -28,11 +29,12 @@ Preferences preferences;
 NostrEvent nostr;
 NostrRelayManager nostrRelayManager;
 
-String nostrPubkey = "";
+String nostrRecipientPubkey = "";
 String nostrWalletPubkey = "";
+long nostrMinZap = 0;
+String nostrSenderPubkey = "";
 int pinNumber = INVALID_PIN_NUMBER;
 int runtimeMs = 0;
-long nostrMinZap = 0;
 
 int kind0CreatedAt = 0;
 int kind9735CreatedAt = 0;
@@ -41,11 +43,13 @@ bool savedNewParams = false;
 
 void onSaveParams() {
   Serial.println(F("Saving params"));
-  String nostrNpub = String(wm_nostr_npub.getValue());
-  nostrNpub.toLowerCase();
+  String nostrRecipientNpub = String(wm_nostr_recipient_npub.getValue());
+  nostrRecipientNpub.toLowerCase();
   String nostrRelaysStr = String(wm_nostr_relays.getValue());
   String nostrMinZapStr = String(wm_nostr_min_zap.getValue());
   nostrMinZap = nostrMinZapStr.toInt();
+  String nostrSenderNpub = String(wm_nostr_sender_npub.getValue());
+  nostrSenderNpub.toLowerCase();
   String pinNumberStr = String(wm_pin_number.getValue());
   pinNumber = pinNumberStr == "" ? INVALID_PIN_NUMBER : pinNumberStr.toInt();
   String runtimeMsStr = String(wm_run_time.getValue());
@@ -55,12 +59,15 @@ void onSaveParams() {
   Serial.print(F("Saving nostr_relays: "));
   Serial.println(nostrRelaysStr);
   preferences.putString("nostr_relays", nostrRelaysStr);
-  Serial.print(F("Saving nostr_npub: "));
-  Serial.println(nostrNpub);
-  preferences.putString("nostr_npub", nostrNpub);
+  Serial.print(F("Saving nostr_recipient_npub: "));
+  Serial.println(nostrRecipientNpub);
+  preferences.putString("nostr_recipient_npub", nostrRecipientNpub);
   Serial.print(F("Saving nostr_min_zap: "));
   Serial.println(nostrMinZapStr);
   preferences.putULong("nostr_min_zap", nostrMinZapStr.toInt());
+  Serial.print(F("Saving nostr_sender_npub: "));
+  Serial.println(nostrSenderNpub);
+  preferences.putString("nostr_sender_npub", nostrSenderNpub);
   Serial.print(F("Saving pin_number: "));
   Serial.println(pinNumberStr);
   preferences.putUShort("pin_number", pinNumberStr.toInt());
@@ -281,7 +288,7 @@ void kind0Event(const std::string& key, const char* payload) {
   eventRequestOptions->kinds = kinds;
   eventRequestOptions->kinds_count = 1;
 
-  String ps[] = {nostrPubkey};
+  String ps[] = {nostrRecipientPubkey};
   eventRequestOptions->p = ps;
   eventRequestOptions->p_count = 1;
 
@@ -330,27 +337,34 @@ void kind9735Event(const std::string& key, const char* payload) {
     return;
   }
 
-  JsonVariantConst bolt11;
+  JsonVariantConst bolt11 = JsonVariantConst();
   bool foundRecipient = false;
+  bool shouldFindSender = nostrSenderPubkey.length() > 0;
+  bool foundSender = false;
   for (JsonVariantConst tag : tags.as<JsonArrayConst>()) {
     if (!tag[0].is<const char*>()) {
       continue;
     }
-    if (strcmp(tag[0], "bolt11") == 0) {
+    if (strcmp(tag[0], "bolt11") == 0 && tag[1].is<const char*>()) {
       bolt11 = tag[1];
-    } else if (strcmp(tag[0], "p") == 0 && tag[1].is<const char*>() && (strcmp(tag[1], nostrPubkey.c_str()) == 0)) {
+    } else if (strcmp(tag[0], "p") == 0 && tag[1].is<const char*>() && (strcmp(tag[1], nostrRecipientPubkey.c_str()) == 0)) {
       foundRecipient = true;
+    } else if (shouldFindSender && strcmp(tag[0], "P") == 0 && tag[1].is<const char*>() && (strcmp(tag[1], nostrSenderPubkey.c_str()) == 0)) {
+      foundSender = true;
     }
   }
   if (!foundRecipient) {
     Serial.println(F("kind9735Event: No recipient tag"));
     return;
   }
-  if (!bolt11.is<const char*>()) {
+  if (shouldFindSender && !foundSender) {
+    Serial.println(F("kind9735Event: No sender tag"));
+    return;
+  }
+  if (bolt11.isNull()) {
     Serial.println(F("kind9735Event: No bolt11 tag"));
     return;
   }
-
   String bolt11Str = String(bolt11);
   bolt11Str.toLowerCase();
   Serial.print(F("kind9735Event: bolt11 is: "));
@@ -425,16 +439,18 @@ void setup() {
 
   preferences.begin("config", true);
   String nostrRelaysStr = preferences.getString("nostr_relays", "");
-  String nostrNpub = preferences.getString("nostr_npub", "");
-  pinNumber = preferences.getUShort("pin_number", 13);
+  String nostrRecipientNpub = preferences.getString("nostr_recipient_npub", "");
   nostrMinZap = preferences.getULong("nostr_min_zap", 0);
+  String nostrSenderNpub = preferences.getString("nostr_sender_npub", "");
+  pinNumber = preferences.getUShort("pin_number", 13);
   runtimeMs = preferences.getUInt("run_time", 3000);
   preferences.end();
 
   wm_nostr_relays.setValue(nostrRelaysStr.c_str(), 200);
-  wm_nostr_npub.setValue(nostrNpub.c_str(), 100);
+  wm_nostr_recipient_npub.setValue(nostrRecipientNpub.c_str(), 64);
   String nostrMinZapStr = String(nostrMinZap);
   wm_nostr_min_zap.setValue(nostrMinZapStr.c_str(), 19);
+  wm_nostr_sender_npub.setValue(nostrSenderNpub.c_str(), 64);
   String pinNumberStr = (pinNumber == INVALID_PIN_NUMBER) ? "" : String(pinNumber);
   wm_pin_number.setValue(pinNumberStr.c_str(), 2);
   String runtimeMsStr = String(runtimeMs);
@@ -445,8 +461,9 @@ void setup() {
 
   // Add custom parameters
   wm.addParameter(&wm_nostr_relays);
-  wm.addParameter(&wm_nostr_npub);
+  wm.addParameter(&wm_nostr_recipient_npub);
   wm.addParameter(&wm_nostr_min_zap);
+  wm.addParameter(&wm_nostr_sender_npub);
   wm.addParameter(&wm_pin_number);
   wm.addParameter(&wm_run_time);
 
@@ -489,15 +506,23 @@ void setup() {
     return;
   }
   // Parsing values that are always saved as strings:
-  nostrPubkey = npubToHex(nostrNpub);
-  if (nostrPubkey.length() == 0 || nostrRelaysStr.length() == 0) {
+  nostrRecipientPubkey = npubToHex(nostrRecipientNpub);
+  if (nostrRecipientNpub.length() == 0 || nostrRelaysStr.length() == 0) {
     Serial.println(F("No npub hex found or no relays found, restarting..."));
     delay(1000);
     ESP.restart();
     return;
   }
-  Serial.print(F("nostrPubkey: "));
-  Serial.println(nostrPubkey);
+  Serial.print(F("nostrRecipientPubkey: "));
+  Serial.println(nostrRecipientPubkey);
+
+  if (nostrSenderNpub.length() > 0) {
+    nostrSenderPubkey = npubToHex(nostrSenderNpub);
+  } else {
+    nostrSenderPubkey = "";
+  }
+  Serial.print(F("nostrSenderPubkey: "));
+  Serial.println(nostrSenderPubkey);
 
   // Split the string into a vector
   std::vector<String> nostrRelaysVector;
@@ -526,7 +551,7 @@ void setup() {
   NostrRequestOptions* eventRequestOptions = new NostrRequestOptions();
 
   String authors[1];
-  authors[0] = nostrPubkey;
+  authors[0] = nostrRecipientPubkey;
   eventRequestOptions->authors = authors;
   eventRequestOptions->authors_count = 1;
 
