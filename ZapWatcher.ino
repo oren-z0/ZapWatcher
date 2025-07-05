@@ -337,36 +337,40 @@ void kind9735Event(const std::string& key, const char* payload) {
     return;
   }
 
-  JsonVariantConst bolt11 = JsonVariantConst();
+  String bolt11Str = "";
   bool foundRecipient = false;
-  bool shouldFindSender = nostrSenderPubkey.length() > 0;
-  bool foundSender = false;
+  bool foundSender = nostrSenderPubkey.length() == 0; // if empty, behave as if already found sender.
   for (JsonVariantConst tag : tags.as<JsonArrayConst>()) {
     if (!tag[0].is<const char*>()) {
       continue;
     }
-    if (strcmp(tag[0], "bolt11") == 0 && tag[1].is<const char*>()) {
-      bolt11 = tag[1];
-    } else if (strcmp(tag[0], "p") == 0 && tag[1].is<const char*>() && (strcmp(tag[1], nostrRecipientPubkey.c_str()) == 0)) {
-      foundRecipient = true;
-    } else if (shouldFindSender && strcmp(tag[0], "P") == 0 && tag[1].is<const char*>() && (strcmp(tag[1], nostrSenderPubkey.c_str()) == 0)) {
-      foundSender = true;
+    if (strcmp(tag[0], "bolt11") == 0) {
+      if (tag[1].is<const char*>()) {
+        bolt11Str = String(tag[1]);
+        bolt11Str.toLowerCase();
+      }
+    } else if (strcmp(tag[0], "p") == 0) {
+      if (tag[1].is<const char*>() && (strcmp(tag[1], nostrRecipientPubkey.c_str()) == 0)) {
+        foundRecipient = true;
+      }
+    } else if (!foundSender && strcmp(tag[0], "P") == 0) {
+      if (tag[1].is<const char*>() && (strcmp(tag[1], nostrSenderPubkey.c_str()) == 0)) {
+        foundSender = true;
+      }
     }
   }
   if (!foundRecipient) {
     Serial.println(F("kind9735Event: No recipient tag"));
     return;
   }
-  if (shouldFindSender && !foundSender) {
+  if (!foundSender) {
     Serial.println(F("kind9735Event: No sender tag"));
     return;
   }
-  if (bolt11.isNull()) {
+  if (bolt11Str.length() == 0) {
     Serial.println(F("kind9735Event: No bolt11 tag"));
     return;
   }
-  String bolt11Str = String(bolt11);
-  bolt11Str.toLowerCase();
   Serial.print(F("kind9735Event: bolt11 is: "));
   Serial.println(bolt11Str);
   if (!bolt11Str.startsWith("lnbc")) {
