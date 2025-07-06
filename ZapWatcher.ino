@@ -532,8 +532,8 @@ void setup() {
   Serial.print(F("Loaded niot_price: "));
   Serial.println(niotPrice);
   niotUnit = preferences.getString("niot_unit", "");
-  Serial.print(F("Loaded niot_trigger_id: "));
-  Serial.println(niotTriggerId);
+  Serial.print(F("Loaded niot_inut: "));
+  Serial.println(niotUnit);
   pinNumber = preferences.getUShort("pin_number", 13);
   Serial.print(F("Loaded pin_number: "));
   Serial.println(pinNumber);
