@@ -19,10 +19,10 @@
 
 // Define custom parameters
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space)", "", 200);
-WiFiManagerParameter wm_recipient_npub("recipient_npub", "Recipient npub", "", 63);
+WiFiManagerParameter wm_recipient_npub("recipient_npub", "Recipient npub", "", 64);
 WiFiManagerParameter wm_nostr_min_zap("nostr_min_zap", "Min Zap (milli sats)", "", 19);
-WiFiManagerParameter wm_sender_npub("sender_npub", "Sender npub", "", 63);
-WiFiManagerParameter wm_niot_trigger_id("niot_trigger_id", "nIoT Trigger ID", "", 25);
+WiFiManagerParameter wm_sender_npub("sender_npub", "Sender npub", "", 64);
+WiFiManagerParameter wm_niot_trigger_id("niot_trigger_id", "nIoT Trigger ID", "", 26);
 WiFiManagerParameter wm_pin_number("pin_number", "PIN Number", "", 2);
 WiFiManagerParameter wm_run_time("run_time", "Runtime (milliseconds)", "", 6);
 
@@ -499,11 +499,11 @@ void setup() {
   preferences.end();
 
   wm_nostr_relays.setValue(nostrRelaysStr.c_str(), 200);
-  wm_recipient_npub.setValue(nostrRecipientNpub.c_str(), 63);
+  wm_recipient_npub.setValue(nostrRecipientNpub.c_str(), 64);
   String nostrMinZapStr = String(nostrMinZap);
   wm_nostr_min_zap.setValue(nostrMinZapStr.c_str(), 19);
-  wm_sender_npub.setValue(nostrSenderNpub.c_str(), 63);
-  wm_niot_trigger_id.setValue(niotTriggerId.c_str(), 25);
+  wm_sender_npub.setValue(nostrSenderNpub.c_str(), 64);
+  wm_niot_trigger_id.setValue(niotTriggerId.c_str(), 26);
   String pinNumberStr = (pinNumber == INVALID_PIN_NUMBER) ? "" : String(pinNumber);
   wm_pin_number.setValue(pinNumberStr.c_str(), 2);
   String runtimeMsStr = String(runtimeMs);
