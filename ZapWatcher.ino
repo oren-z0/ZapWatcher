@@ -362,21 +362,26 @@ void kind9735Event(const std::string& key, const char* payload) {
       if (tag[1].is<const char*>() && (strcmp(tag[1], nostrRecipientPubkey.c_str()) == 0)) {
         foundRecipient = true;
       }
-    } else if (!foundSender && strcmp(tag[0], "P") == 0) {
-      if (tag[1].is<const char*>() && (strcmp(tag[1], nostrSenderPubkey.c_str()) == 0)) {
-        foundSender = true;
-      }
-    } else if (!foundTriggerId && strcmp(tag[0], "description") == 0) {
+    } else if ((!foundTriggerId || !foundSender) && strcmp(tag[0], "description") == 0) {
+      // Uppercase P should be the sender pubkey - but it's not always implemented.
+      // The sender pubkey is always in the zap-request.
       if (tag[1].is<const char*>()) {
         StaticJsonDocument<4098> zapRequest;
-        error = deserializeJson(zapRequest, String(tag[1]));
+        error = deserializeJson(zapRequest, tag[1].as<const char*>());
         // We don't verify the entire format & signature of the zap request.
-        if (!error && zapRequest["content"].is<const char*>()) {
-          StaticJsonDocument<200> zapRequestContent;
-          error = deserializeJson(zapRequestContent, String(zapRequest["content"]));
-          if (!error) {
-            if (!foundTriggerId && zapRequestContent["triggerId"].is<const char*>() && (strcmp(zapRequestContent["triggerId"], niotTriggerId.c_str()) == 0)) {
-              foundTriggerId = true;
+        if (!error) {
+          if (!foundSender && zapRequest["pubkey"].is<const char*>()) {
+            Serial.print(F("kind9735Event: found sender pubkey: "));
+            Serial.println(zapRequest["pubkey"].as<const char*>());
+            foundSender = (strcmp(zapRequest["pubkey"], nostrSenderPubkey.c_str()) == 0);
+          }
+          if (!foundTriggerId && zapRequest["content"].is<const char*>()) {
+            Serial.print(F("kind9735Event: zap content: "));
+            Serial.println(zapRequest["content"].as<const char*>());
+            StaticJsonDocument<200> zapRequestContent;
+            error = deserializeJson(zapRequestContent, zapRequest["content"].as<const char*>());
+            if (!error) {
+              foundTriggerId = zapRequestContent["triggerId"].is<const char*>() && (strcmp(zapRequestContent["triggerId"], niotTriggerId.c_str()) == 0);
             }
           }
         }
