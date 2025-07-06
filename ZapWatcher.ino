@@ -21,8 +21,10 @@
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space)", "", 200);
 WiFiManagerParameter wm_recipient_npub("recipient_npub", "Recipient npub", "", 64);
 WiFiManagerParameter wm_nostr_min_zap("nostr_min_zap", "Min Zap (milli sats)", "", 19);
-WiFiManagerParameter wm_sender_npub("sender_npub", "Sender npub", "", 64);
-WiFiManagerParameter wm_niot_trigger_id("niot_trigger_id", "nIoT Trigger ID", "", 26);
+WiFiManagerParameter wm_sender_npub("sender_npub", "Sender npub (optional)", "", 64);
+WiFiManagerParameter wm_niot_trigger_id("niot_trigger_id", "nIoT Trigger ID (optional)", "", 26);
+WiFiManagerParameter wm_niot_price("niot_price", "nIoT Price (optional, for fiat pricing)", "", 20);
+WiFiManagerParameter wm_niot_unit("niot_unit", "nIoT Price Unit (optional, for fiat pricing)", "", 10);
 WiFiManagerParameter wm_pin_number("pin_number", "PIN Number", "", 2);
 WiFiManagerParameter wm_run_time("run_time", "Runtime (milliseconds)", "", 6);
 
@@ -37,6 +39,8 @@ String nostrWalletPubkey = "";
 long nostrMinZap = 0;
 String nostrSenderPubkey = "";
 String niotTriggerId = "";
+String niotPrice = "";
+String niotUnit = "";
 int pinNumber = INVALID_PIN_NUMBER;
 int runtimeMs = 0;
 
@@ -55,6 +59,16 @@ void onSaveParams() {
   String nostrSenderNpub = String(wm_sender_npub.getValue());
   nostrSenderNpub.toLowerCase();
   niotTriggerId = String(wm_niot_trigger_id.getValue());
+  niotPrice = String(wm_niot_price.getValue());
+  if (niotPrice.indexOf('.') != -1) {
+    while (niotPrice[niotPrice.length() - 1] == '0') {
+      niotPrice = niotPrice.substring(0, niotPrice.length() - 1);
+    }
+  }
+  if (niotPrice[niotPrice.length() - 1] == '.') {
+    niotPrice = niotPrice.substring(0, niotPrice.length() - 1);
+  }
+  niotUnit = String(wm_niot_unit.getValue());
   String pinNumberStr = String(wm_pin_number.getValue());
   pinNumber = pinNumberStr == "" ? INVALID_PIN_NUMBER : pinNumberStr.toInt();
   String runtimeMsStr = String(wm_run_time.getValue());
@@ -76,6 +90,12 @@ void onSaveParams() {
   Serial.print(F("Saving niot_trigger_id: "));
   Serial.println(niotTriggerId);
   preferences.putString("niot_trigger_id", niotTriggerId);
+  Serial.print(F("Saving niot_price: "));
+  Serial.println(niotPrice);
+  preferences.putString("niot_price", niotPrice);
+  Serial.print(F("Saving niot_unit: "));
+  Serial.println(niotUnit);
+  preferences.putString("niot_unit", niotUnit);
   Serial.print(F("Saving pin_number: "));
   Serial.println(pinNumberStr);
   preferences.putUShort("pin_number", pinNumberStr.toInt());
@@ -349,6 +369,8 @@ void kind9735Event(const std::string& key, const char* payload) {
   bool foundRecipient = false;
   bool foundSender = nostrSenderPubkey.length() == 0; // if empty, behave as if already found sender.
   bool foundTriggerId = niotTriggerId.length() == 0; // if empty, behave as if already found trigger id.
+  bool foundNiotPrice = niotPrice.length() == 0; // if empty, behave as if already found price.
+  bool foundNiotUnit = niotUnit.length() == 0; // if empty, behave as if already found unit.
   for (JsonVariantConst tag : tags.as<JsonArrayConst>()) {
     if (!tag[0].is<const char*>()) {
       continue;
@@ -362,7 +384,7 @@ void kind9735Event(const std::string& key, const char* payload) {
       if (tag[1].is<const char*>() && (strcmp(tag[1], nostrRecipientPubkey.c_str()) == 0)) {
         foundRecipient = true;
       }
-    } else if ((!foundTriggerId || !foundSender) && strcmp(tag[0], "description") == 0) {
+    } else if ((!foundTriggerId || !foundNiotPrice || !foundNiotUnit || !foundSender) && strcmp(tag[0], "description") == 0) {
       // Uppercase P should be the sender pubkey - but it's not always implemented.
       // The sender pubkey is always in the zap-request.
       if (tag[1].is<const char*>()) {
@@ -375,13 +397,15 @@ void kind9735Event(const std::string& key, const char* payload) {
             Serial.println(zapRequest["pubkey"].as<const char*>());
             foundSender = (strcmp(zapRequest["pubkey"], nostrSenderPubkey.c_str()) == 0);
           }
-          if (!foundTriggerId && zapRequest["content"].is<const char*>()) {
+          if ((!foundTriggerId || !foundNiotPrice || !foundNiotUnit) && zapRequest["content"].is<const char*>()) {
             Serial.print(F("kind9735Event: zap content: "));
             Serial.println(zapRequest["content"].as<const char*>());
             StaticJsonDocument<200> zapRequestContent;
             error = deserializeJson(zapRequestContent, zapRequest["content"].as<const char*>());
             if (!error) {
               foundTriggerId = zapRequestContent["triggerId"].is<const char*>() && (strcmp(zapRequestContent["triggerId"], niotTriggerId.c_str()) == 0);
+              foundNiotPrice = zapRequestContent["price"].is<const char*>() && (strcmp(zapRequestContent["price"], niotPrice.c_str()) == 0);
+              foundNiotUnit = zapRequestContent["unit"].is<const char*>() && (strcmp(zapRequestContent["unit"], niotUnit.c_str()) == 0);
             }
           }
         }
@@ -398,6 +422,14 @@ void kind9735Event(const std::string& key, const char* payload) {
   }
   if (!foundTriggerId) {
     Serial.println(F("kind9735Event: No nIoT trigger-id"));
+    return;
+  }
+  if (!foundNiotPrice) {
+    Serial.println(F("kind9735Event: No nIoT price"));
+    return;
+  }
+  if (!foundNiotUnit) {
+    Serial.println(F("kind9735Event: No nIoT price-unit"));
     return;
   }
   if (bolt11Str.length() == 0) {
@@ -490,6 +522,12 @@ void setup() {
   niotTriggerId = preferences.getString("niot_trigger_id", "");
   Serial.print(F("Loaded niot_trigger_id: "));
   Serial.println(niotTriggerId);
+  niotPrice = preferences.getString("niot_price", "");
+  Serial.print(F("Loaded niot_price: "));
+  Serial.println(niotPrice);
+  niotUnit = preferences.getString("niot_unit", "");
+  Serial.print(F("Loaded niot_trigger_id: "));
+  Serial.println(niotTriggerId);
   pinNumber = preferences.getUShort("pin_number", 13);
   Serial.print(F("Loaded pin_number: "));
   Serial.println(pinNumber);
@@ -504,6 +542,8 @@ void setup() {
   wm_nostr_min_zap.setValue(nostrMinZapStr.c_str(), 19);
   wm_sender_npub.setValue(nostrSenderNpub.c_str(), 64);
   wm_niot_trigger_id.setValue(niotTriggerId.c_str(), 26);
+  wm_niot_price.setValue(niotPrice.c_str(), 20);
+  wm_niot_unit.setValue(niotUnit.c_str(), 10);
   String pinNumberStr = (pinNumber == INVALID_PIN_NUMBER) ? "" : String(pinNumber);
   wm_pin_number.setValue(pinNumberStr.c_str(), 2);
   String runtimeMsStr = String(runtimeMs);
@@ -518,6 +558,8 @@ void setup() {
   wm.addParameter(&wm_nostr_min_zap);
   wm.addParameter(&wm_sender_npub);
   wm.addParameter(&wm_niot_trigger_id);
+  wm.addParameter(&wm_niot_price);
+  wm.addParameter(&wm_niot_unit);
   wm.addParameter(&wm_pin_number);
   wm.addParameter(&wm_run_time);
 
@@ -589,6 +631,10 @@ void setup() {
 
   Serial.print(F("niotTriggerId: "));
   Serial.println(niotTriggerId);
+  Serial.print(F("niotPrice: "));
+  Serial.println(niotPrice);
+  Serial.print(F("niotUnit: "));
+  Serial.println(niotUnit);
 
   // Split the string into a vector
   std::vector<String> nostrRelaysVector;
