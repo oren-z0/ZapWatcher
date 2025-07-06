@@ -537,7 +537,7 @@ void setup() {
   pinNumber = preferences.getUShort("pin_number", 13);
   Serial.print(F("Loaded pin_number: "));
   Serial.println(pinNumber);
-  runtimeMs = preferences.getUInt("run_time", 3000);
+  runtimeMs = preferences.getUInt("run_time", 5000);
   Serial.print(F("Loaded run_time: "));
   Serial.println(runtimeMs);
   preferences.end();
