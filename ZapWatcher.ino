@@ -19,10 +19,10 @@
 
 // Define custom parameters
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space)", "", 200);
-WiFiManagerParameter wm_nostr_recipient_npub("nostr_recipient_npub", "Recipient NPub", "", 64);
+WiFiManagerParameter wm_recipient_npub("recipient_npub", "Recipient npub", "", 63);
 WiFiManagerParameter wm_nostr_min_zap("nostr_min_zap", "Min Zap (milli sats)", "", 19);
-WiFiManagerParameter wm_nostr_sender_npub("nostr_sender_npub", "Sender NPub", "", 64);
-WiFiManagerParameter wm_niot_trigger_id("niot_trigger_id", "nIoT Trigger ID", "", 64);
+WiFiManagerParameter wm_sender_npub("sender_npub", "Sender npub", "", 63);
+WiFiManagerParameter wm_niot_trigger_id("niot_trigger_id", "nIoT Trigger ID", "", 25);
 WiFiManagerParameter wm_pin_number("pin_number", "PIN Number", "", 2);
 WiFiManagerParameter wm_run_time("run_time", "Runtime (milliseconds)", "", 6);
 
@@ -47,12 +47,12 @@ bool savedNewParams = false;
 
 void onSaveParams() {
   Serial.println(F("Saving params"));
-  String nostrRecipientNpub = String(wm_nostr_recipient_npub.getValue());
+  String nostrRecipientNpub = String(wm_recipient_npub.getValue());
   nostrRecipientNpub.toLowerCase();
   String nostrRelaysStr = String(wm_nostr_relays.getValue());
   String nostrMinZapStr = String(wm_nostr_min_zap.getValue());
   nostrMinZap = nostrMinZapStr.toInt();
-  String nostrSenderNpub = String(wm_nostr_sender_npub.getValue());
+  String nostrSenderNpub = String(wm_sender_npub.getValue());
   nostrSenderNpub.toLowerCase();
   niotTriggerId = String(wm_niot_trigger_id.getValue());
   String pinNumberStr = String(wm_pin_number.getValue());
@@ -64,15 +64,15 @@ void onSaveParams() {
   Serial.print(F("Saving nostr_relays: "));
   Serial.println(nostrRelaysStr);
   preferences.putString("nostr_relays", nostrRelaysStr);
-  Serial.print(F("Saving nostr_recipient_npub: "));
+  Serial.print(F("Saving recipient_npub: "));
   Serial.println(nostrRecipientNpub);
-  preferences.putString("nostr_recipient_npub", nostrRecipientNpub);
+  preferences.putString("recipient_npub", nostrRecipientNpub);
   Serial.print(F("Saving nostr_min_zap: "));
   Serial.println(nostrMinZapStr);
   preferences.putULong("nostr_min_zap", nostrMinZapStr.toInt());
-  Serial.print(F("Saving nostr_sender_npub: "));
+  Serial.print(F("Saving sender_npub: "));
   Serial.println(nostrSenderNpub);
-  preferences.putString("nostr_sender_npub", nostrSenderNpub);
+  preferences.putString("sender_npub", nostrSenderNpub);
   Serial.print(F("Saving niot_trigger_id: "));
   Serial.println(niotTriggerId);
   preferences.putString("niot_trigger_id", niotTriggerId);
@@ -471,19 +471,33 @@ void setup() {
 
   preferences.begin("config", true);
   String nostrRelaysStr = preferences.getString("nostr_relays", "");
-  String nostrRecipientNpub = preferences.getString("nostr_recipient_npub", "");
+  Serial.print(F("Loaded nostr_relays: "));
+  Serial.println(nostrRelaysStr);
+  String nostrRecipientNpub = preferences.getString("recipient_npub", "");
+  Serial.print(F("Loaded recipient_npub: "));
+  Serial.println(nostrRecipientNpub);
   nostrMinZap = preferences.getULong("nostr_min_zap", 0);
-  String nostrSenderNpub = preferences.getString("nostr_sender_npub", "");
+  Serial.print(F("Loaded nostr_min_zap: "));
+  Serial.println(nostrMinZap);
+  String nostrSenderNpub = preferences.getString("sender_npub", "");
+  Serial.print(F("Loaded sender_npub: "));
+  Serial.println(nostrSenderNpub);
   niotTriggerId = preferences.getString("niot_trigger_id", "");
+  Serial.print(F("Loaded niot_trigger_id: "));
+  Serial.println(niotTriggerId);
   pinNumber = preferences.getUShort("pin_number", 13);
+  Serial.print(F("Loaded pin_number: "));
+  Serial.println(pinNumber);
   runtimeMs = preferences.getUInt("run_time", 3000);
+  Serial.print(F("Loaded run_time: "));
+  Serial.println(runtimeMs);
   preferences.end();
 
   wm_nostr_relays.setValue(nostrRelaysStr.c_str(), 200);
-  wm_nostr_recipient_npub.setValue(nostrRecipientNpub.c_str(), 64);
+  wm_recipient_npub.setValue(nostrRecipientNpub.c_str(), 63);
   String nostrMinZapStr = String(nostrMinZap);
   wm_nostr_min_zap.setValue(nostrMinZapStr.c_str(), 19);
-  wm_nostr_sender_npub.setValue(nostrSenderNpub.c_str(), 64);
+  wm_sender_npub.setValue(nostrSenderNpub.c_str(), 63);
   wm_niot_trigger_id.setValue(niotTriggerId.c_str(), 25);
   String pinNumberStr = (pinNumber == INVALID_PIN_NUMBER) ? "" : String(pinNumber);
   wm_pin_number.setValue(pinNumberStr.c_str(), 2);
@@ -495,9 +509,9 @@ void setup() {
 
   // Add custom parameters
   wm.addParameter(&wm_nostr_relays);
-  wm.addParameter(&wm_nostr_recipient_npub);
+  wm.addParameter(&wm_recipient_npub);
   wm.addParameter(&wm_nostr_min_zap);
-  wm.addParameter(&wm_nostr_sender_npub);
+  wm.addParameter(&wm_sender_npub);
   wm.addParameter(&wm_niot_trigger_id);
   wm.addParameter(&wm_pin_number);
   wm.addParameter(&wm_run_time);
@@ -542,8 +556,8 @@ void setup() {
   }
   // Parsing values that are always saved as strings:
   nostrRecipientPubkey = npubToHex(nostrRecipientNpub);
-  if (nostrRecipientNpub.length() == 0 || nostrRelaysStr.length() == 0) {
-    Serial.println(F("No npub hex found or no relays found, restarting..."));
+  if (nostrRecipientPubkey.length() == 0) {
+    Serial.println(F("No recipient pubkey hex found, restarting..."));
     delay(1000);
     ESP.restart();
     return;
@@ -553,6 +567,15 @@ void setup() {
 
   if (nostrSenderNpub.length() > 0) {
     nostrSenderPubkey = npubToHex(nostrSenderNpub);
+    Serial.print(F("nostrSenderPubkey: "));
+    Serial.println(nostrSenderPubkey);
+    if (nostrSenderPubkey.length() == 0) {
+      Serial.println(F("No sender pubkey hex found, restarting..."));
+      delay(1000);
+      ESP.restart();
+      delay(5000);
+      return;
+    }
   } else {
     nostrSenderPubkey = "";
   }
@@ -573,6 +596,14 @@ void setup() {
       }
       startIndex = i + 1;
     }
+  }
+
+  if (nostrRelaysVector.size() == 0) {
+    Serial.println(F("No relays found, restarting..."));
+    delay(1000);
+    ESP.restart();
+    delay(5000);
+    return;
   }
 
   nostr.setLogging(true);
