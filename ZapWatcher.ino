@@ -18,7 +18,7 @@
 #define MAX_HTTP_RETRIES (600)
 
 // Define custom parameters
-WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space)", "", 200);
+WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space, no wss:// prefix)", "", 200);
 WiFiManagerParameter wm_recipient_npub("recipient_npub", "Recipient npub", "", 64);
 WiFiManagerParameter wm_nostr_min_zap("nostr_min_zap", "Min Zap (milli sats)", "", 19);
 WiFiManagerParameter wm_sender_npub("sender_npub", "Sender npub (optional)", "", 64);
