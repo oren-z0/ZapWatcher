@@ -60,7 +60,7 @@ void onSaveParams() {
   nostrSenderNpub.toLowerCase();
   niotTriggerId = String(wm_niot_trigger_id.getValue());
   niotPrice = String(wm_niot_price.getValue());
-  if (niotPrice.indexOf('.') != -1) {
+  if (niotPrice.indexOf('.') >= 0) {
     while (niotPrice[niotPrice.length() - 1] == '0') {
       niotPrice = niotPrice.substring(0, niotPrice.length() - 1);
     }
@@ -403,9 +403,15 @@ void kind9735Event(const std::string& key, const char* payload) {
             StaticJsonDocument<200> zapRequestContent;
             error = deserializeJson(zapRequestContent, zapRequest["content"].as<const char*>());
             if (!error) {
-              foundTriggerId = zapRequestContent["triggerId"].is<const char*>() && (strcmp(zapRequestContent["triggerId"], niotTriggerId.c_str()) == 0);
-              foundNiotPrice = zapRequestContent["price"].is<const char*>() && (strcmp(zapRequestContent["price"], niotPrice.c_str()) == 0);
-              foundNiotUnit = zapRequestContent["unit"].is<const char*>() && (strcmp(zapRequestContent["unit"], niotUnit.c_str()) == 0);
+              if (zapRequestContent["triggerId"].is<const char*>() && (strcmp(zapRequestContent["triggerId"], niotTriggerId.c_str()) == 0)) {
+                foundTriggerId = true;
+              }
+              if (zapRequestContent["price"].is<const char*>() && (strcmp(zapRequestContent["price"], niotPrice.c_str()) == 0)) {
+                foundNiotPrice = true;
+              }
+              if (zapRequestContent["unit"].is<const char*>() && (strcmp(zapRequestContent["unit"], niotUnit.c_str()) == 0)) {
+                foundNiotUnit = true;
+              }
             }
           }
         }
