@@ -450,7 +450,7 @@ void kind9735Event(const std::string& key, const char* payload) {
   }
   long amountMsats = 0;
   int bolt11Offset = 4;
-  for (int bolt11Offset = 4; bolt11Offset < bolt11Str.length(); bolt11Offset++) {
+  for (bolt11Offset = 4; bolt11Offset < bolt11Str.length(); bolt11Offset++) {
     char c = bolt11Str[bolt11Offset];
     if (c >= '0' && c <= '9') {
       amountMsats = amountMsats * 10 + (c - '0');
