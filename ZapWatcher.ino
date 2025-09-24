@@ -543,6 +543,7 @@ void kind9735Event(const std::string& key, const char* payload) {
   digitalWrite(pinNumber, HIGH);
   if (runtimeMs > 0) {
     delay(runtimeMs);
+    lastWiFiOkMs = millis();
   }
   digitalWrite(pinNumber, LOW);
 }
