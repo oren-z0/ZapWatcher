@@ -16,6 +16,8 @@
 #define MIN_RELAYS (2)
 #define INVALID_PIN_NUMBER (0xFFFF)
 #define MAX_HTTP_RETRIES (600)
+#define MAX_UPTIME_MS (6UL * 60UL * 60UL * 1000UL)
+#define WIFI_DEAD_MS (5UL * 60UL * 1000UL) // 5 minutes without WiFi
 
 // Define custom parameters
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space, no wss:// prefix)", "", 200);
@@ -37,77 +39,21 @@ NostrRelayManager nostrRelayManager;
 String nostrRecipientPubkey = "";
 String nostrWalletPubkey = "";
 long nostrMinZap = 0;
+String nostrSenderNpub = "";
 String nostrSenderPubkey = "";
 String niotTriggerId = "";
 String niotPrice = "";
 String niotUnit = "";
 int pinNumber = INVALID_PIN_NUMBER;
+std::vector<String> nostrRelaysVector;
 int runtimeMs = 0;
 
-int kind0CreatedAt = 0;
-int kind9735CreatedAt = 0;
+long kind0CreatedAt = 0;
+long kind9735CreatedAt = 0;
+unsigned long bootMs = 0;
+unsigned long lastWiFiOkMs = 0;
 
 bool savedNewParams = false;
-
-void onSaveParams() {
-  Serial.println(F("Saving params"));
-  String nostrRecipientNpub = String(wm_recipient_npub.getValue());
-  nostrRecipientNpub.toLowerCase();
-  String nostrRelaysStr = String(wm_nostr_relays.getValue());
-  String nostrMinZapStr = String(wm_nostr_min_zap.getValue());
-  nostrMinZap = nostrMinZapStr.toInt();
-  String nostrSenderNpub = String(wm_sender_npub.getValue());
-  nostrSenderNpub.toLowerCase();
-  niotTriggerId = String(wm_niot_trigger_id.getValue());
-  niotPrice = String(wm_niot_price.getValue());
-  if (niotPrice.indexOf('.') >= 0) {
-    while (niotPrice[niotPrice.length() - 1] == '0') {
-      niotPrice = niotPrice.substring(0, niotPrice.length() - 1);
-    }
-  }
-  if (niotPrice[niotPrice.length() - 1] == '.') {
-    niotPrice = niotPrice.substring(0, niotPrice.length() - 1);
-  }
-  niotUnit = String(wm_niot_unit.getValue());
-  String pinNumberStr = String(wm_pin_number.getValue());
-  pinNumber = pinNumberStr == "" ? INVALID_PIN_NUMBER : pinNumberStr.toInt();
-  String runtimeMsStr = String(wm_run_time.getValue());
-  runtimeMs = runtimeMsStr.toInt();
-
-  preferences.begin("config", false);
-  Serial.print(F("Saving nostr_relays: "));
-  Serial.println(nostrRelaysStr);
-  preferences.putString("nostr_relays", nostrRelaysStr);
-  Serial.print(F("Saving recipient_npub: "));
-  Serial.println(nostrRecipientNpub);
-  preferences.putString("recipient_npub", nostrRecipientNpub);
-  Serial.print(F("Saving nostr_min_zap: "));
-  Serial.println(nostrMinZapStr);
-  preferences.putULong("nostr_min_zap", nostrMinZapStr.toInt());
-  Serial.print(F("Saving sender_npub: "));
-  Serial.println(nostrSenderNpub);
-  preferences.putString("sender_npub", nostrSenderNpub);
-  Serial.print(F("Saving niot_trigger_id: "));
-  Serial.println(niotTriggerId);
-  preferences.putString("niot_trigger_id", niotTriggerId);
-  Serial.print(F("Saving niot_price: "));
-  Serial.println(niotPrice);
-  preferences.putString("niot_price", niotPrice);
-  Serial.print(F("Saving niot_unit: "));
-  Serial.println(niotUnit);
-  preferences.putString("niot_unit", niotUnit);
-  Serial.print(F("Saving pin_number: "));
-  Serial.println(pinNumberStr);
-  preferences.putUShort("pin_number", pinNumberStr.toInt());
-  Serial.print(F("Saving run_time: "));
-  Serial.println(runtimeMsStr);
-  preferences.putUInt("run_time", runtimeMsStr.toInt());
-  preferences.end();
-  delay(1000);
-
-  savedNewParams = true;
-}
-
 
 String npubToHex(const String& npub) {
   // Remove "npub" prefix if present
@@ -160,6 +106,129 @@ String npubToHex(const String& npub) {
   return hex;
 }
 
+void onSaveParams() {
+  Serial.println(F("Saving params"));
+  String nostrRecipientNpub = String(wm_recipient_npub.getValue());
+  nostrRecipientNpub.toLowerCase();
+  String nostrRelaysStr = String(wm_nostr_relays.getValue());
+  String nostrMinZapStr = String(wm_nostr_min_zap.getValue());
+  nostrMinZap = nostrMinZapStr.toInt();
+  nostrSenderNpub = String(wm_sender_npub.getValue());
+  nostrSenderNpub.toLowerCase();
+  niotTriggerId = String(wm_niot_trigger_id.getValue());
+  niotPrice = String(wm_niot_price.getValue());
+  if (niotPrice.indexOf('.') >= 0) {
+    while (niotPrice[niotPrice.length() - 1] == '0') {
+      niotPrice = niotPrice.substring(0, niotPrice.length() - 1);
+    }
+  }
+  if (niotPrice[niotPrice.length() - 1] == '.') {
+    niotPrice = niotPrice.substring(0, niotPrice.length() - 1);
+  }
+  niotUnit = String(wm_niot_unit.getValue());
+  String pinNumberStr = String(wm_pin_number.getValue());
+  pinNumber = pinNumberStr == "" ? INVALID_PIN_NUMBER : pinNumberStr.toInt();
+  String runtimeMsStr = String(wm_run_time.getValue());
+  runtimeMs = runtimeMsStr.toInt();
+
+  preferences.begin("config", false);
+  Serial.print(F("Saving nostr_relays: "));
+  Serial.println(nostrRelaysStr);
+  preferences.putString("nostr_relays", nostrRelaysStr);
+  Serial.print(F("Saving recipient_npub: "));
+  Serial.println(nostrRecipientNpub);
+  preferences.putString("recipient_npub", nostrRecipientNpub);
+  Serial.print(F("Saving nostr_min_zap: "));
+  Serial.println(nostrMinZapStr);
+  preferences.putULong("nostr_min_zap", nostrMinZapStr.toInt());
+  Serial.print(F("Saving sender_npub: "));
+  Serial.println(nostrSenderNpub);
+  preferences.putString("sender_npub", nostrSenderNpub);
+  Serial.print(F("Saving niot_trigger_id: "));
+  Serial.println(niotTriggerId);
+  preferences.putString("niot_trigger_id", niotTriggerId);
+  Serial.print(F("Saving niot_price: "));
+  Serial.println(niotPrice);
+  preferences.putString("niot_price", niotPrice);
+  Serial.print(F("Saving niot_unit: "));
+  Serial.println(niotUnit);
+  preferences.putString("niot_unit", niotUnit);
+  Serial.print(F("Saving pin_number: "));
+  Serial.println(pinNumberStr);
+  preferences.putUShort("pin_number", pinNumberStr.toInt());
+  Serial.print(F("Saving run_time: "));
+  Serial.println(runtimeMsStr);
+  preferences.putUInt("run_time", runtimeMsStr.toInt());
+  preferences.end();
+  delay(1000);
+
+  savedNewParams = true;
+}
+
+void subscribeToZaps() {
+  // assumes nostrWalletPubkey and nostrRecipientPubkey are set
+  NostrRequestOptions* eventRequestOptions = new NostrRequestOptions();
+
+  String authors[1];
+  authors[0] = nostrWalletPubkey;
+  eventRequestOptions->authors = authors;
+  eventRequestOptions->authors_count = 1;
+
+  int kinds[] = {9735};
+  eventRequestOptions->kinds = kinds;
+  eventRequestOptions->kinds_count = 1;
+
+  String ps[] = {nostrRecipientPubkey};
+  eventRequestOptions->p = ps;
+  eventRequestOptions->p_count = 1;
+
+  time_t now;
+  time(&now);
+  eventRequestOptions->since = now;
+
+  Serial.print(F("Requesting zap receipt events since: "));
+  Serial.println(now);
+  nostrRelayManager.requestEvents(eventRequestOptions);
+  delete eventRequestOptions;
+}
+
+#if ESP_IDF_VERSION_MAJOR >= 4
+void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
+#else
+void onWiFiEvent(system_event_id_t event) {
+#endif
+  switch (event) {
+#if defined(ARDUINO_EVENT_WIFI_STA_GOT_IP)
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+#elif defined(SYSTEM_EVENT_STA_GOT_IP)
+    case SYSTEM_EVENT_STA_GOT_IP:
+#endif
+      Serial.println(F("[WiFi] Got IP"));
+      lastWiFiOkMs = millis();
+     // re-connect relays after WiFi returns
+      if (nostrWalletPubkey.length() > 0 && nostrRecipientPubkey.length() > 0) {
+        Serial.println(F("[WiFi] Re-subscribing to zaps after WiFi returns"));
+        nostrRelayManager.disconnect();
+        delay(50);
+        nostrRelayManager.connect();
+        subscribeToZaps();
+      } else {
+        Serial.println(F("[WiFi] No nostr wallet or recipient pubkey, skipping re-subscribing to zaps"));
+      }
+      break;
+#if defined(ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+#elif defined(SYSTEM_EVENT_STA_DISCONNECTED)
+    case SYSTEM_EVENT_STA_DISCONNECTED:
+#endif
+      Serial.println(F("[WiFi] Disconnected -> reconnecting"));
+      nostrRelayManager.disconnect();
+      WiFi.reconnect();
+      break;
+    default:
+      break;
+  }
+}
 
 void okEvent(const std::string& key, const char* payload) {
   Serial.println(F("OK event"));
@@ -201,13 +270,13 @@ String getNostrWalletPubkey(const String& domain, const String& username) {
     }
     break;
   }
-  nostrRelayManager.connect();
   if (httpAttempt >= MAX_HTTP_RETRIES) {
     Serial.println(F("Failed to get nostr pubkey"));
     ESP.restart();
     delay(5000);
     return "";
   }
+  nostrRelayManager.connect();
   Serial.println(F("Response JSON:"));
   serializeJsonPretty(responseDoc, Serial);
   Serial.println();
@@ -219,7 +288,6 @@ String getNostrWalletPubkey(const String& domain, const String& username) {
   }
   return String(newNostrPubkey);
 }
-
 
 void kind0Event(const std::string& key, const char* payload) {
   Serial.println(F("Kind 0 event"));
@@ -243,7 +311,7 @@ void kind0Event(const std::string& key, const char* payload) {
   }
 
   JsonVariantConst createdAt = kind0Doc[2]["created_at"];
-  if (!createdAt.is<int>()) {
+  if (!createdAt.is<int>() && !createdAt.is<long>()) {
     Serial.println(F("No created_at"));
     return;
   }
@@ -296,38 +364,10 @@ void kind0Event(const std::string& key, const char* payload) {
     Serial.println(F("No new wallet nostr pubkey, skipping"));
     return;
   }
-  if (newNostrWalletPubkey == nostrWalletPubkey) {
-    Serial.println(F("Nostr pubkey is the same as the previous wallet nostr pubkey"));
-    return;
-  }
   nostrWalletPubkey = newNostrWalletPubkey;
-
   Serial.print(F("New wallet nostr pubkey: "));
   Serial.println(nostrWalletPubkey);
-
-  NostrRequestOptions* eventRequestOptions = new NostrRequestOptions();
-
-  String authors[1];
-  authors[0] = nostrWalletPubkey;
-  eventRequestOptions->authors = authors;
-  eventRequestOptions->authors_count = 1;
-
-  int kinds[] = {9735};
-  eventRequestOptions->kinds = kinds;
-  eventRequestOptions->kinds_count = 1;
-
-  String ps[] = {nostrRecipientPubkey};
-  eventRequestOptions->p = ps;
-  eventRequestOptions->p_count = 1;
-
-  time_t now;
-  time(&now);
-  eventRequestOptions->since = now;
-
-  Serial.print(F("Requesting zap receipt events since: "));
-  Serial.println(now);
-  nostrRelayManager.requestEvents(eventRequestOptions);
-  delete eventRequestOptions;
+  subscribeToZaps();
 }
 
 void kind9735Event(const std::string& key, const char* payload) {
@@ -490,7 +530,7 @@ void kind9735Event(const std::string& key, const char* payload) {
   }
 
   JsonVariantConst createdAt = kind9735Doc[2]["created_at"];
-  if (!createdAt.is<int>()) {
+  if (!createdAt.is<int>() && !createdAt.is<long>()) {
     Serial.println(F("kind9735Event: No created_at"));
     return;
   }
@@ -507,24 +547,71 @@ void kind9735Event(const std::string& key, const char* payload) {
   digitalWrite(pinNumber, LOW);
 }
 
+bool shouldForceConfigPortal() {
+  if (pinNumber == INVALID_PIN_NUMBER) {
+    Serial.println(F("Pin number is invalid, forcing config portal"));
+    return true;
+  }
+  if (nostrRecipientPubkey.length() == 0) {
+    Serial.println(F("Recipient pubkey is invalid, forcing config portal"));
+    return true;
+  }
+  if (nostrMinZap == 0) {
+    Serial.println(F("Min zap is invalid, forcing config portal"));
+    return true;
+  }
+  if ((nostrSenderNpub.length() > 0) && (nostrSenderPubkey.length() == 0)) {
+    Serial.println(F("Sender pubkey is invalid, forcing config portal"));
+    return true;
+  }
+  if (nostrRelaysVector.size() == 0) {
+    Serial.println(F("No relays found, forcing config portal"));
+    return true;
+  }
+  if (runtimeMs <= 0) {
+    Serial.println(F("No run time found, forcing config portal"));
+    return true;
+  }
+  return false;
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println(F("setup"));
 
+  lastWiFiOkMs = millis();
+  bootMs = millis();
+
   preferences.begin("config", true);
   String nostrRelaysStr = preferences.getString("nostr_relays", "");
+  // Split the string into a vector
+  int startIndex = 0;
+  for (int i = 0; i <= nostrRelaysStr.length(); i++) {
+    if (i == nostrRelaysStr.length() || nostrRelaysStr[i] == ' ') {
+      if (startIndex < i) {
+        nostrRelaysVector.push_back(nostrRelaysStr.substring(startIndex, i));
+      }
+      startIndex = i + 1;
+    }
+  }
   Serial.print(F("Loaded nostr_relays: "));
   Serial.println(nostrRelaysStr);
   String nostrRecipientNpub = preferences.getString("recipient_npub", "");
   Serial.print(F("Loaded recipient_npub: "));
   Serial.println(nostrRecipientNpub);
-  nostrMinZap = preferences.getULong("nostr_min_zap", 0);
+  nostrRecipientPubkey = npubToHex(nostrRecipientNpub);
+  Serial.print(F("nostrRecipientPubkey: "));
+  Serial.println(nostrRecipientPubkey);
+  nostrMinZap = preferences.getULong("nostr_min_zap", 1);
   Serial.print(F("Loaded nostr_min_zap: "));
   Serial.println(nostrMinZap);
-  String nostrSenderNpub = preferences.getString("sender_npub", "");
+  nostrSenderNpub = preferences.getString("sender_npub", "");
   Serial.print(F("Loaded sender_npub: "));
   Serial.println(nostrSenderNpub);
+  nostrSenderPubkey = (nostrSenderNpub.length() > 0) ? npubToHex(nostrSenderNpub) : "";
+  Serial.print(F("nostrSenderPubkey: "));
+  Serial.println(nostrSenderPubkey);
   niotTriggerId = preferences.getString("niot_trigger_id", "");
   Serial.print(F("Loaded niot_trigger_id: "));
   Serial.println(niotTriggerId);
@@ -532,7 +619,7 @@ void setup() {
   Serial.print(F("Loaded niot_price: "));
   Serial.println(niotPrice);
   niotUnit = preferences.getString("niot_unit", "");
-  Serial.print(F("Loaded niot_inut: "));
+  Serial.print(F("Loaded niot_unit: "));
   Serial.println(niotUnit);
   pinNumber = preferences.getUShort("pin_number", 13);
   Serial.print(F("Loaded pin_number: "));
@@ -541,6 +628,10 @@ void setup() {
   Serial.print(F("Loaded run_time: "));
   Serial.println(runtimeMs);
   preferences.end();
+
+  WiFi.onEvent(onWiFiEvent);
+  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);
 
   wm_nostr_relays.setValue(nostrRelaysStr.c_str(), 200);
   wm_recipient_npub.setValue(nostrRecipientNpub.c_str(), 64);
@@ -578,85 +669,47 @@ void setup() {
   char ssid[32];
   uint64_t chipid = ESP.getEfuseMac();
   snprintf(ssid, sizeof(ssid), "ZapWatcher %08X v%d", (uint32_t)(chipid), ZAPWATCHER_VERSION);
-  if (!wm.autoConnect(ssid)) {
-    Serial.println(F("Failed to connect or hit timeout. Restarting..."));
-    delay(3000);
+
+  WiFi.persistent(true);
+  if (shouldForceConfigPortal()) {
+    Serial.println(F("Forcing config portal"));
+    wm.startConfigPortal(ssid);
+    WiFi.persistent(false);
+    Serial.println(F("Restarting to reload new params after forced startConfigPortal..."));
+    delay(1000);
     ESP.restart();
     delay(5000);
     return;
-  }
-  if (savedNewParams) {
-    Serial.println(F("Restarting to reload new params..."));
-    delay(1000);
-    ESP.restart();
-    delay(5000);
-    return;
-  }
-  delay(1000);
-  configTime(0, 0, "pool.ntp.org");
-
-  if (pinNumber == INVALID_PIN_NUMBER) {
-    Serial.println(F("No pin number found, restarting..."));
-    delay(1000);
-    ESP.restart();
-    return;
-  }
-  if (runtimeMs == 0) {
-    Serial.println(F("No run time found, restarting..."));
-    delay(1000);
-    ESP.restart();
-    return;
-  }
-  // Parsing values that are always saved as strings:
-  nostrRecipientPubkey = npubToHex(nostrRecipientNpub);
-  if (nostrRecipientPubkey.length() == 0) {
-    Serial.println(F("No recipient pubkey hex found, restarting..."));
-    delay(1000);
-    ESP.restart();
-    return;
-  }
-  Serial.print(F("nostrRecipientPubkey: "));
-  Serial.println(nostrRecipientPubkey);
-
-  if (nostrSenderNpub.length() > 0) {
-    nostrSenderPubkey = npubToHex(nostrSenderNpub);
-    Serial.print(F("nostrSenderPubkey: "));
-    Serial.println(nostrSenderPubkey);
-    if (nostrSenderPubkey.length() == 0) {
-      Serial.println(F("No sender pubkey hex found, restarting..."));
+  } else {
+    bool connected = wm.autoConnect(ssid);
+    WiFi.persistent(false);
+    if (!connected) {
+      Serial.println(F("Failed to connect or hit timeout. Restarting..."));
+      delay(3000);
+      ESP.restart();
+      delay(5000);
+      return;
+    }
+    if (savedNewParams) {
+      Serial.println(F("Restarting to reload new params after new params saved..."));
       delay(1000);
       ESP.restart();
       delay(5000);
       return;
     }
-  } else {
-    nostrSenderPubkey = "";
   }
-  Serial.print(F("nostrSenderPubkey: "));
-  Serial.println(nostrSenderPubkey);
-
-  Serial.print(F("niotTriggerId: "));
-  Serial.println(niotTriggerId);
-  Serial.print(F("niotPrice: "));
-  Serial.println(niotPrice);
-  Serial.print(F("niotUnit: "));
-  Serial.println(niotUnit);
-
-  // Split the string into a vector
-  std::vector<String> nostrRelaysVector;
-  int startIndex = 0;
-
-  for (int i = 0; i <= nostrRelaysStr.length(); i++) {
-    if (i == nostrRelaysStr.length() || nostrRelaysStr[i] == ' ') {
-      if (startIndex < i) {
-        nostrRelaysVector.push_back(nostrRelaysStr.substring(startIndex, i));
-      }
-      startIndex = i + 1;
-    }
+  delay(1000);
+  configTime(0, 0, "pool.ntp.org");
+  time_t now = 0;
+  int tries = 0;
+  while (now < 1700000000 && tries < 30) { // ~2023-11-14
+    delay(500);
+    time(&now);
+    Serial.print(F("NTP time: "));
+    Serial.println(now);
   }
-
-  if (nostrRelaysVector.size() == 0) {
-    Serial.println(F("No relays found, restarting..."));
+  if (now < 1700000000) {
+    Serial.println(F("Failed to get NTP time"));
     delay(1000);
     ESP.restart();
     delay(5000);
@@ -700,4 +753,21 @@ void loop() {
   // Retrieve stored parameters
   nostrRelayManager.loop();
   nostrRelayManager.broadcastEvents();
+  if (WiFi.status() == WL_CONNECTED) {
+    lastWiFiOkMs = millis();
+  }
+  if (millis() - lastWiFiOkMs > WIFI_DEAD_MS) {
+    Serial.println(F("[Health] WiFi dead too long -> restarting"));
+    delay(200);
+    ESP.restart();
+    delay(5000);
+    return;
+  }
+  if (millis() - bootMs > MAX_UPTIME_MS) {
+    Serial.println(F("[Health] Max uptime reached -> restarting"));
+    delay(200);
+    ESP.restart();
+    delay(5000);
+    return;
+  }
 }
