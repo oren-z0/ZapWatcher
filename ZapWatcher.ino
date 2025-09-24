@@ -682,6 +682,7 @@ void setup() {
     delay(5000);
     return;
   } else {
+    Serial.println(F("Auto connecting to WiFi"));
     bool connected = wm.autoConnect(ssid);
     WiFi.persistent(false);
     if (!connected) {
