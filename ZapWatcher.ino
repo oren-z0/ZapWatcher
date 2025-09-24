@@ -11,7 +11,7 @@
 #include <vector>  // Add this for std::vector
 #include <WiFiManager.h>  // https://github.com/tzapu/WiFiManager
 
-#define ZAPWATCHER_VERSION (1)
+#define ZAPWATCHER_VERSION (2)
 
 #define MIN_RELAYS (2)
 #define INVALID_PIN_NUMBER (0xFFFF)
