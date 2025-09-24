@@ -54,6 +54,7 @@ unsigned long bootMs = 0;
 unsigned long lastWiFiOkMs = 0;
 
 bool savedNewParams = false;
+WiFiManager* wm_ptr = nullptr;
 
 String npubToHex(const String& npub) {
   // Remove "npub" prefix if present
@@ -163,6 +164,9 @@ void onSaveParams() {
   delay(1000);
 
   savedNewParams = true;
+  if (wm_ptr != nullptr) {
+    wm_ptr->stopConfigPortal();
+  }
 }
 
 void subscribeToZaps() {
@@ -649,6 +653,7 @@ void setup() {
 
   // Initialize WiFiManager
   WiFiManager wm;
+  wm_ptr = &wm;
 
   // Add custom parameters
   wm.addParameter(&wm_nostr_relays);
@@ -700,6 +705,7 @@ void setup() {
       return;
     }
   }
+  wm_ptr = nullptr;
   delay(1000);
   configTime(0, 0, "pool.ntp.org");
   time_t now = 0;
