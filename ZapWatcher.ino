@@ -11,7 +11,7 @@
 #include <vector>  // Add this for std::vector
 #include <WiFiManager.h>  // https://github.com/tzapu/WiFiManager
 
-#define ZAPWATCHER_VERSION (2)
+#define ZAPWATCHER_VERSION (3)
 
 #define MIN_RELAYS (2)
 #define INVALID_PIN_NUMBER (0xFFFF)
@@ -209,15 +209,14 @@ void onWiFiEvent(system_event_id_t event) {
 #endif
       Serial.println(F("[WiFi] Got IP"));
       lastWiFiOkMs = millis();
-     // re-connect relays after WiFi returns
+      // re-connect relays after WiFi returns
       if (nostrWalletPubkey.length() > 0 && nostrRecipientPubkey.length() > 0) {
-        Serial.println(F("[WiFi] Re-subscribing to zaps after WiFi returns"));
-        nostrRelayManager.disconnect();
-        delay(50);
-        nostrRelayManager.connect();
-        subscribeToZaps();
+        Serial.println(F("[WiFi] IP received after nostr subscription - restarting"));
+        delay(200);
+        ESP.restart();
+        delay(5000);
       } else {
-        Serial.println(F("[WiFi] No nostr wallet or recipient pubkey, skipping re-subscribing to zaps"));
+        Serial.println(F("[WiFi] No nostr wallet or recipient pubkey, this is the initial ip."));
       }
       break;
 #if defined(ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
@@ -225,9 +224,10 @@ void onWiFiEvent(system_event_id_t event) {
 #elif defined(SYSTEM_EVENT_STA_DISCONNECTED)
     case SYSTEM_EVENT_STA_DISCONNECTED:
 #endif
-      Serial.println(F("[WiFi] Disconnected -> reconnecting"));
-      nostrRelayManager.disconnect();
-      WiFi.reconnect();
+      Serial.println(F("[WiFi] Disconnected -> restarting"));
+      delay(200);
+      ESP.restart();
+      delay(5000);
       break;
     default:
       break;
@@ -585,7 +585,6 @@ void setup() {
   delay(1000);
   Serial.println(F("setup"));
 
-  lastWiFiOkMs = millis();
   bootMs = millis();
 
   preferences.begin("config", true);
@@ -755,6 +754,7 @@ void setup() {
   delete eventRequestOptions;
   pinMode(pinNumber, OUTPUT);
   digitalWrite(pinNumber, LOW);
+  lastWiFiOkMs = millis();
 }
 
 void loop() {
