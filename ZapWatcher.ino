@@ -19,8 +19,12 @@
 #define MAX_UPTIME_MS (6UL * 60UL * 60UL * 1000UL)
 #define WIFI_DEAD_MS (5UL * 60UL * 1000UL) // 5 minutes without WiFi
 #define RECONNECT_TIMEOUT_MS (2UL * 60UL * 60UL * 1000UL) // 2 hours to reconnect to relays
-#define KEEPALIVE_TIMEOUT_MS (5UL * 60UL * 1000UL) // Will subscribe to kind0
-#define MAX_KEEPALIVE_ATTEMPTS (4)
+#define ZAP_RESUBSCRIBE_TIMEOUT_MS (2UL * 60UL * 1000UL) // Will subscribe to kind0
+#define MAX_ZAP_SUBSCRIPTION_ATTEMPTS (4)
+
+#define ZAP_SUBSCRIBING_STATE_IDLE (0)
+#define ZAP_SUBSCRIBING_STATE_SUBSCRIBING (1)
+#define ZAP_SUBSCRIBING_STATE_SUBSCRIBED (2)
 
 // Define custom parameters
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space, no wss:// prefix)", "", 200);
@@ -59,8 +63,9 @@ unsigned long bootMs = 0;
 unsigned long lastWiFiOkMs = 0;
 unsigned long lastRelayReconnectMs = 0;
 int minExpectedRelays = 0;
-unsigned long lastKeepaliveMs = 0;
-int keepaliveAttempts = 0;
+unsigned long lastZapSubscriptionAttemptMs = 0;
+int zapSubscribeAttempts = 0;
+int zapSubscribingState = ZAP_SUBSCRIBING_STATE_IDLE;
 
 bool savedNewParams = false;
 WiFiManager* wm_ptr = nullptr;
@@ -184,6 +189,8 @@ void onSaveParams() {
 }
 
 void subscribeToZaps() {
+  lastZapSubscriptionAttemptMs = millis();
+  zapSubscribingState = ZAP_SUBSCRIBING_STATE_SUBSCRIBING;
   // assumes nostrWalletPubkey and nostrRecipientPubkey are set
   NostrRequestOptions* eventRequestOptions = new NostrRequestOptions();
 
@@ -307,7 +314,7 @@ String getNostrWalletPubkey(const String& domain, const String& username) {
 }
 
 void kind0Event(const std::string& key, const char* payload) {
-  Serial.println(F("Kind 0 event, payload is: "));
+  Serial.print(F("Kind 0 event, payload is: "));
   Serial.println(payload);
 
   StaticJsonDocument<4098> kind0Doc;
@@ -321,7 +328,19 @@ void kind0Event(const std::string& key, const char* payload) {
 
   JsonVariantConst eventType = kind0Doc[0];
 
-  if (!eventType.is<const char*>() || strcmp(eventType, "EVENT") != 0) {
+  if (!eventType.is<const char*>()) {
+    Serial.println(F("Event type to a string"));
+    return;
+  }
+
+  if (strcmp(eventType, "EVENT") != 0) {
+    if (strcmp(eventType, "EOSE") == 0) {
+      if (zapSubscribingState == ZAP_SUBSCRIBING_STATE_SUBSCRIBING) {
+        Serial.println(F("EOSE event, assuming subscribed succesfully to zap events"));
+        zapSubscribingState = ZAP_SUBSCRIBING_STATE_SUBSCRIBED;
+      }
+      return;
+    }
     Serial.println(F("Not an event"));
     return;
   }
@@ -334,7 +353,6 @@ void kind0Event(const std::string& key, const char* payload) {
   long createdAtLong = createdAt.as<long>();
   Serial.print(F("Kind0 created_at: "));
   Serial.println(createdAtLong);
-  lastKeepaliveMs = millis();
   if (createdAtLong <= kind0CreatedAt) {
     Serial.println(F("Event is not newer than previous kind0 event"));
     return;
@@ -390,7 +408,8 @@ void kind0Event(const std::string& key, const char* payload) {
   Serial.println(nostrWalletPubkey);
   subscribeToZaps();
   if (isInitialEvent && (initialRuntimeMs > 0)) {
-    Serial.println(F("Running initial runtime"));
+    Serial.print(F("Running initial runtime: "));
+    Serial.println(initialRuntimeMs);
     runPin(initialRuntimeMs);
   }
 }
@@ -566,7 +585,8 @@ void kind9735Event(const std::string& key, const char* payload) {
   }
   kind9735CreatedAt = createdAtLong;
 
-  Serial.println(F("kind9735Event: Running runtime"));
+  Serial.print(F("kind9735Event: Running runtime: "));
+  Serial.println(runtimeMs);
   if (runtimeMs > 0) {
     runPin(runtimeMs);
   }
@@ -603,11 +623,9 @@ bool shouldForceConfigPortal() {
 void runPin(unsigned long ms) {
   digitalWrite(pinNumber, HIGH);
   delay(ms);
+  digitalWrite(pinNumber, LOW);
   lastWiFiOkMs = millis();
   lastRelayReconnectMs = lastWiFiOkMs;
-  lastKeepaliveMs = lastWiFiOkMs;
-  keepaliveAttempts = 0;
-  digitalWrite(pinNumber, LOW);
 }
 
 void requestKind0() {
@@ -637,6 +655,7 @@ void setup() {
   nostrWalletPubkey = "";
   kind0CreatedAt = 0;
   kind9735CreatedAt = 0;
+  zapSubscribingState = ZAP_SUBSCRIBING_STATE_IDLE;
   savedNewParams = false;
 
   preferences.begin("config", true);
@@ -802,8 +821,8 @@ void setup() {
   digitalWrite(pinNumber, LOW);
   lastWiFiOkMs = millis();
   lastRelayReconnectMs = lastWiFiOkMs;
-  lastKeepaliveMs = lastWiFiOkMs;
-  keepaliveAttempts = 0;
+  lastZapSubscriptionAttemptMs = lastWiFiOkMs;
+  zapSubscribeAttempts = 0;
 }
 
 void loop() {
@@ -833,23 +852,21 @@ void loop() {
   if (now - lastRelayReconnectMs > RECONNECT_TIMEOUT_MS) {
     Serial.println(F("[Health] Relay reconnect timeout -> reconnecting"));
     shouldReconnect = true;
-  } else if (now - lastKeepaliveMs > KEEPALIVE_TIMEOUT_MS) {
-    if (keepaliveAttempts >= MAX_KEEPALIVE_ATTEMPTS) {
-      Serial.println(F("[Health] Too many keepalive attempts -> reconnecting"));
+  } else if ((zapSubscribingState != ZAP_SUBSCRIBING_STATE_SUBSCRIBED) && (now - lastZapSubscriptionAttemptMs > ZAP_RESUBSCRIBE_TIMEOUT_MS)) {
+    if (zapSubscribeAttempts >= MAX_ZAP_SUBSCRIPTION_ATTEMPTS) {
+      Serial.println(F("[Health] Too many zap subscription attempts -> reconnecting"));
       shouldReconnect = true;
     } else {
-      Serial.println(F("[Health] Sending keepalive attempt"));
-      lastKeepaliveMs = now;
-      keepaliveAttempts++;
-      requestKind0();
+      Serial.println(F("[Health] Trying to resubscribe to zap events"));
+      subscribeToZaps();
+      zapSubscribeAttempts++;
     }
   }
   if (shouldReconnect) {
     nostrRelayManager.disconnect(); // already has internal delay
     nostrRelayManager.connect();
     subscribeToZaps();
+    zapSubscribeAttempts = 0;
     lastRelayReconnectMs = millis();
-    lastKeepaliveMs = lastRelayReconnectMs;
-    keepaliveAttempts = 0;
   }
 }
