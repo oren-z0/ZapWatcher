@@ -11,13 +11,15 @@
 #include <vector>  // Add this for std::vector
 #include <WiFiManager.h>  // https://github.com/tzapu/WiFiManager
 
-#define ZAPWATCHER_VERSION (3)
+#define ZAPWATCHER_VERSION (4)
 
 #define MIN_RELAYS (2)
 #define INVALID_PIN_NUMBER (0xFFFF)
 #define MAX_HTTP_RETRIES (600)
 #define MAX_UPTIME_MS (6UL * 60UL * 60UL * 1000UL)
 #define WIFI_DEAD_MS (5UL * 60UL * 1000UL) // 5 minutes without WiFi
+#define RECONNECT_TIMEOUT_MS (2UL * 60UL * 60UL * 1000UL) // 2 hours to reconnect to relays
+#define NOT_ENOUGH_CONNECTIONS_TIMEOUT_MS (2UL * 60UL * 1000UL) // 2 minutes to not receive any WS events
 
 // Define custom parameters
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space, no wss:// prefix)", "", 200);
@@ -52,6 +54,10 @@ long kind0CreatedAt = 0;
 long kind9735CreatedAt = 0;
 unsigned long bootMs = 0;
 unsigned long lastWiFiOkMs = 0;
+unsigned long lastRelayReconnectMs = 0;
+int minExpectedRelays = 0;
+int connectedRelays = 0;
+unsigned long lastEnoughConnectionsMs = 0;
 
 bool savedNewParams = false;
 WiFiManager* wm_ptr = nullptr;
@@ -234,9 +240,24 @@ void onWiFiEvent(system_event_id_t event) {
   }
 }
 
+void connectedEvent(const std::string& key, const char* payload) {
+  Serial.println(F("Connected event"));
+  connectedRelays++;
+  Serial.print(F("connectedRelays: "));
+  Serial.println(connectedRelays);
+}
+
+void disconnectedEvent(const std::string& key, const char* payload) {
+  Serial.println(F("Disconnected event"));
+  if (connectedRelays > 0) {
+    connectedRelays--;
+  }
+  Serial.print(F("connectedRelays: "));
+  Serial.println(connectedRelays);
+}
+
 void okEvent(const std::string& key, const char* payload) {
-  Serial.println(F("OK event"));
-  Serial.println(F("payload is: "));
+  Serial.println(F("OK event, payload is: "));
   Serial.println(payload);
 }
 
@@ -294,8 +315,7 @@ String getNostrWalletPubkey(const String& domain, const String& username) {
 }
 
 void kind0Event(const std::string& key, const char* payload) {
-  Serial.println(F("Kind 0 event"));
-  Serial.println(F("payload is: "));
+  Serial.println(F("Kind 0 event, payload is: "));
   Serial.println(payload);
 
   StaticJsonDocument<4098> kind0Doc;
@@ -586,6 +606,7 @@ void setup() {
   Serial.println(F("setup"));
 
   bootMs = millis();
+  connectedRelays = 0;
 
   preferences.begin("config", true);
   String nostrRelaysStr = preferences.getString("nostr_relays", "");
@@ -726,10 +747,13 @@ void setup() {
   nostr.setLogging(true);
   nostrRelayManager.setRelays(nostrRelaysVector);
   int nostrRelaysVectorSize = nostrRelaysVector.size();
-  nostrRelayManager.setMinRelaysAndTimeout(min(nostrRelaysVectorSize, MIN_RELAYS), 10000);
+  minExpectedRelays = min(nostrRelaysVectorSize, MIN_RELAYS);
+  nostrRelayManager.setMinRelaysAndTimeout(minExpectedRelays, 10000);
 
   Serial.println(F("Connecting to relays"));
   nostrRelayManager.setEventCallback("ok", okEvent);
+  nostrRelayManager.setEventCallback("connected", connectedEvent);
+  nostrRelayManager.setEventCallback("disconnected", disconnectedEvent);
   nostrRelayManager.setEventCallback(0, kind0Event);
   nostrRelayManager.setEventCallback(9735, kind9735Event);
   nostrRelayManager.connect();
@@ -755,27 +779,49 @@ void setup() {
   pinMode(pinNumber, OUTPUT);
   digitalWrite(pinNumber, LOW);
   lastWiFiOkMs = millis();
+  lastRelayReconnectMs = lastWiFiOkMs;
+  lastEnoughConnectionsMs = lastWiFiOkMs;
 }
 
 void loop() {
   // Retrieve stored parameters
   nostrRelayManager.loop();
   nostrRelayManager.broadcastEvents();
+  delay(50);
+  unsigned long now = millis();
   if (WiFi.status() == WL_CONNECTED) {
-    lastWiFiOkMs = millis();
+    lastWiFiOkMs = now;
   }
-  if (millis() - lastWiFiOkMs > WIFI_DEAD_MS) {
+  if (now - bootMs > MAX_UPTIME_MS) {
+    Serial.println(F("[Health] Max uptime reached"));
+    delay(200);
+    ESP.restart();
+    delay(5000);
+    return;
+  }
+  if (now - lastWiFiOkMs > WIFI_DEAD_MS) {
     Serial.println(F("[Health] WiFi dead too long -> restarting"));
     delay(200);
     ESP.restart();
     delay(5000);
     return;
   }
-  if (millis() - bootMs > MAX_UPTIME_MS) {
-    Serial.println(F("[Health] Max uptime reached -> restarting"));
-    delay(200);
-    ESP.restart();
-    delay(5000);
-    return;
+  if (minExpectedRelays <= connectedRelays) {
+    lastEnoughConnectionsMs = now;
+  }
+  bool shouldReconnect = false;
+  if (now - lastRelayReconnectMs > RECONNECT_TIMEOUT_MS) {
+    Serial.println(F("[Health] Relay reconnect timeout -> reconnecting"));
+    shouldReconnect = true;
+  } else if (now - lastEnoughConnectionsMs > NOT_ENOUGH_CONNECTIONS_TIMEOUT_MS) {
+    Serial.println(F("[Health] Relay not-enough-connections timeout -> reconnecting"));
+    shouldReconnect = true;
+  }
+  if (shouldReconnect) {
+    nostrRelayManager.disconnect(); // already has internal delay
+    connectedRelays = 0;
+    nostrRelayManager.connect();
+    lastRelayReconnectMs = millis();
+    lastEnoughConnectionsMs = lastRelayReconnectMs;
   }
 }
