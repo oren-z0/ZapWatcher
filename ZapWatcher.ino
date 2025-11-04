@@ -19,7 +19,8 @@
 #define MAX_UPTIME_MS (6UL * 60UL * 60UL * 1000UL)
 #define WIFI_DEAD_MS (5UL * 60UL * 1000UL) // 5 minutes without WiFi
 #define RECONNECT_TIMEOUT_MS (2UL * 60UL * 60UL * 1000UL) // 2 hours to reconnect to relays
-#define NOT_ENOUGH_CONNECTIONS_TIMEOUT_MS (2UL * 60UL * 1000UL) // 2 minutes to not receive any WS events
+#define KEEPALIVE_TIMEOUT_MS (5UL * 60UL * 1000UL) // Will subscribe to kind0
+#define MAX_KEEPALIVE_ATTEMPTS (4)
 
 // Define custom parameters
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space, no wss:// prefix)", "", 200);
@@ -58,8 +59,8 @@ unsigned long bootMs = 0;
 unsigned long lastWiFiOkMs = 0;
 unsigned long lastRelayReconnectMs = 0;
 int minExpectedRelays = 0;
-int connectedRelays = 0;
-unsigned long lastEnoughConnectionsMs = 0;
+unsigned long lastKeepaliveMs = 0;
+int keepaliveAttempts = 0;
 
 bool savedNewParams = false;
 WiFiManager* wm_ptr = nullptr;
@@ -247,22 +248,6 @@ void onWiFiEvent(system_event_id_t event) {
   }
 }
 
-void connectedEvent(const std::string& key, const char* payload) {
-  Serial.println(F("Connected event"));
-  connectedRelays++;
-  Serial.print(F("connectedRelays: "));
-  Serial.println(connectedRelays);
-}
-
-void disconnectedEvent(const std::string& key, const char* payload) {
-  Serial.println(F("Disconnected event"));
-  if (connectedRelays > 0) {
-    connectedRelays--;
-  }
-  Serial.print(F("connectedRelays: "));
-  Serial.println(connectedRelays);
-}
-
 void okEvent(const std::string& key, const char* payload) {
   Serial.println(F("OK event, payload is: "));
   Serial.println(payload);
@@ -346,12 +331,16 @@ void kind0Event(const std::string& key, const char* payload) {
     Serial.println(F("No created_at"));
     return;
   }
-  if (createdAt <= kind0CreatedAt) {
+  long createdAtLong = createdAt.as<long>();
+  Serial.print(F("Kind0 created_at: "));
+  Serial.println(createdAtLong);
+  lastKeepaliveMs = millis();
+  if (createdAtLong <= kind0CreatedAt) {
     Serial.println(F("Event is not newer than previous kind0 event"));
     return;
   }
   bool isInitialEvent = (kind0CreatedAt == 0);
-  kind0CreatedAt = createdAt;
+  kind0CreatedAt = createdAtLong;
 
   JsonVariantConst content = kind0Doc[2]["content"];
   if (!content.is<const char*>()) {
@@ -570,11 +559,12 @@ void kind9735Event(const std::string& key, const char* payload) {
     Serial.println(F("kind9735Event: No created_at"));
     return;
   }
-  if (createdAt <= kind9735CreatedAt) {
+  long createdAtLong = createdAt.as<long>();
+  if (createdAtLong <= kind9735CreatedAt) {
     Serial.println(F("kind9735Event: Event is not newer than previous kind9735 event"));
     return;
   }
-  kind9735CreatedAt = createdAt;
+  kind9735CreatedAt = createdAtLong;
 
   Serial.println(F("kind9735Event: Running runtime"));
   if (runtimeMs > 0) {
@@ -615,8 +605,27 @@ void runPin(unsigned long ms) {
   delay(ms);
   lastWiFiOkMs = millis();
   lastRelayReconnectMs = lastWiFiOkMs;
-  lastEnoughConnectionsMs = lastWiFiOkMs;
+  lastKeepaliveMs = lastWiFiOkMs;
+  keepaliveAttempts = 0;
   digitalWrite(pinNumber, LOW);
+}
+
+void requestKind0() {
+  NostrRequestOptions* eventRequestOptions = new NostrRequestOptions();
+
+  String authors[1];
+  authors[0] = nostrRecipientPubkey;
+  eventRequestOptions->authors = authors;
+  eventRequestOptions->authors_count = 1;
+
+  int kinds[] = {0};
+  eventRequestOptions->kinds = kinds;
+  eventRequestOptions->kinds_count = 1;
+
+  Serial.println(F("Requesting events"));
+  nostrRelayManager.requestEvents(eventRequestOptions);
+
+  delete eventRequestOptions;
 }
 
 void setup() {
@@ -626,7 +635,6 @@ void setup() {
 
   bootMs = millis();
   nostrWalletPubkey = "";
-  connectedRelays = 0;
   kind0CreatedAt = 0;
   kind9735CreatedAt = 0;
   savedNewParams = false;
@@ -781,35 +789,21 @@ void setup() {
 
   Serial.println(F("Connecting to relays"));
   nostrRelayManager.setEventCallback("ok", okEvent);
-  nostrRelayManager.setEventCallback("connected", connectedEvent);
-  nostrRelayManager.setEventCallback("disconnected", disconnectedEvent);
   nostrRelayManager.setEventCallback(0, kind0Event);
   nostrRelayManager.setEventCallback(9735, kind9735Event);
   nostrRelayManager.connect();
 
-  NostrRequestOptions* eventRequestOptions = new NostrRequestOptions();
-
-  String authors[1];
-  authors[0] = nostrRecipientPubkey;
-  eventRequestOptions->authors = authors;
-  eventRequestOptions->authors_count = 1;
-
-  int kinds[] = {0};
-  eventRequestOptions->kinds = kinds;
-  eventRequestOptions->kinds_count = 1;
-
-  Serial.println(F("Requesting events"));
-  nostrRelayManager.requestEvents(eventRequestOptions);
+  requestKind0();
 
   Serial.print(F("My IP address is: "));
   Serial.println(WiFi.localIP());
 
-  delete eventRequestOptions;
   pinMode(pinNumber, OUTPUT);
   digitalWrite(pinNumber, LOW);
   lastWiFiOkMs = millis();
   lastRelayReconnectMs = lastWiFiOkMs;
-  lastEnoughConnectionsMs = lastWiFiOkMs;
+  lastKeepaliveMs = lastWiFiOkMs;
+  keepaliveAttempts = 0;
 }
 
 void loop() {
@@ -835,22 +829,27 @@ void loop() {
     delay(5000);
     return;
   }
-  if (minExpectedRelays <= connectedRelays) {
-    lastEnoughConnectionsMs = now;
-  }
   bool shouldReconnect = false;
   if (now - lastRelayReconnectMs > RECONNECT_TIMEOUT_MS) {
     Serial.println(F("[Health] Relay reconnect timeout -> reconnecting"));
     shouldReconnect = true;
-  } else if (now - lastEnoughConnectionsMs > NOT_ENOUGH_CONNECTIONS_TIMEOUT_MS) {
-    Serial.println(F("[Health] Relay not-enough-connections timeout -> reconnecting"));
-    shouldReconnect = true;
+  } else if (now - lastKeepaliveMs > KEEPALIVE_TIMEOUT_MS) {
+    if (keepaliveAttempts >= MAX_KEEPALIVE_ATTEMPTS) {
+      Serial.println(F("[Health] Too many keepalive attempts -> reconnecting"));
+      shouldReconnect = true;
+    } else {
+      Serial.println(F("[Health] Sending keepalive attempt"));
+      lastKeepaliveMs = now;
+      keepaliveAttempts++;
+      requestKind0();
+    }
   }
   if (shouldReconnect) {
     nostrRelayManager.disconnect(); // already has internal delay
-    connectedRelays = 0;
     nostrRelayManager.connect();
+    subscribeToZaps();
     lastRelayReconnectMs = millis();
-    lastEnoughConnectionsMs = lastRelayReconnectMs;
+    lastKeepaliveMs = lastRelayReconnectMs;
+    keepaliveAttempts = 0;
   }
 }
