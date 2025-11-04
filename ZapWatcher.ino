@@ -31,6 +31,7 @@ WiFiManagerParameter wm_niot_price("niot_price", "nIoT Price (optional, for fiat
 WiFiManagerParameter wm_niot_unit("niot_unit", "nIoT Price Unit (optional, for fiat pricing)", "", 10);
 WiFiManagerParameter wm_pin_number("pin_number", "PIN Number", "", 2);
 WiFiManagerParameter wm_run_time("run_time", "Runtime (milliseconds)", "", 6);
+WiFiManagerParameter wm_initial_run_time("initial_run_time", "Initial Runtime (milliseconds)", "1000", 6);
 
 // Preferences for storing configuration
 Preferences preferences;
@@ -49,6 +50,7 @@ String niotUnit = "";
 int pinNumber = INVALID_PIN_NUMBER;
 std::vector<String> nostrRelaysVector;
 int runtimeMs = 0;
+int initialRuntimeMs = 0;
 
 long kind0CreatedAt = 0;
 long kind9735CreatedAt = 0;
@@ -137,6 +139,8 @@ void onSaveParams() {
   pinNumber = pinNumberStr == "" ? INVALID_PIN_NUMBER : pinNumberStr.toInt();
   String runtimeMsStr = String(wm_run_time.getValue());
   runtimeMs = runtimeMsStr.toInt();
+  String initialRuntimeMsStr = String(wm_initial_run_time.getValue());
+  initialRuntimeMs = initialRuntimeMsStr.toInt();
 
   preferences.begin("config", false);
   Serial.print(F("Saving nostr_relays: "));
@@ -147,7 +151,7 @@ void onSaveParams() {
   preferences.putString("recipient_npub", nostrRecipientNpub);
   Serial.print(F("Saving nostr_min_zap: "));
   Serial.println(nostrMinZapStr);
-  preferences.putULong("nostr_min_zap", nostrMinZapStr.toInt());
+  preferences.putULong("nostr_min_zap", nostrMinZap);
   Serial.print(F("Saving sender_npub: "));
   Serial.println(nostrSenderNpub);
   preferences.putString("sender_npub", nostrSenderNpub);
@@ -162,10 +166,13 @@ void onSaveParams() {
   preferences.putString("niot_unit", niotUnit);
   Serial.print(F("Saving pin_number: "));
   Serial.println(pinNumberStr);
-  preferences.putUShort("pin_number", pinNumberStr.toInt());
+  preferences.putUShort("pin_number", pinNumber);
   Serial.print(F("Saving run_time: "));
   Serial.println(runtimeMsStr);
-  preferences.putUInt("run_time", runtimeMsStr.toInt());
+  preferences.putUInt("run_time", runtimeMs);
+  Serial.print(F("Saving initial_run_time: "));
+  Serial.println(initialRuntimeMsStr);
+  preferences.putUInt("initial_run_time", initialRuntimeMs);
   preferences.end();
   delay(1000);
 
@@ -343,6 +350,7 @@ void kind0Event(const std::string& key, const char* payload) {
     Serial.println(F("Event is not newer than previous kind0 event"));
     return;
   }
+  bool isInitialEvent = (kind0CreatedAt == 0);
   kind0CreatedAt = createdAt;
 
   JsonVariantConst content = kind0Doc[2]["content"];
@@ -392,6 +400,10 @@ void kind0Event(const std::string& key, const char* payload) {
   Serial.print(F("New wallet nostr pubkey: "));
   Serial.println(nostrWalletPubkey);
   subscribeToZaps();
+  if (isInitialEvent && (initialRuntimeMs > 0)) {
+    Serial.println(F("Running initial runtime"));
+    runPin(initialRuntimeMs);
+  }
 }
 
 void kind9735Event(const std::string& key, const char* payload) {
@@ -564,12 +576,10 @@ void kind9735Event(const std::string& key, const char* payload) {
   }
   kind9735CreatedAt = createdAt;
 
-  digitalWrite(pinNumber, HIGH);
+  Serial.println(F("kind9735Event: Running runtime"));
   if (runtimeMs > 0) {
-    delay(runtimeMs);
-    lastWiFiOkMs = millis();
+    runPin(runtimeMs);
   }
-  digitalWrite(pinNumber, LOW);
 }
 
 bool shouldForceConfigPortal() {
@@ -600,13 +610,26 @@ bool shouldForceConfigPortal() {
   return false;
 }
 
+void runPin(unsigned long ms) {
+  digitalWrite(pinNumber, HIGH);
+  delay(ms);
+  lastWiFiOkMs = millis();
+  lastRelayReconnectMs = lastWiFiOkMs;
+  lastEnoughConnectionsMs = lastWiFiOkMs;
+  digitalWrite(pinNumber, LOW);
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println(F("setup"));
 
   bootMs = millis();
+  nostrWalletPubkey = "";
   connectedRelays = 0;
+  kind0CreatedAt = 0;
+  kind9735CreatedAt = 0;
+  savedNewParams = false;
 
   preferences.begin("config", true);
   String nostrRelaysStr = preferences.getString("nostr_relays", "");
@@ -652,6 +675,9 @@ void setup() {
   runtimeMs = preferences.getUInt("run_time", 5000);
   Serial.print(F("Loaded run_time: "));
   Serial.println(runtimeMs);
+  initialRuntimeMs = preferences.getUInt("initial_run_time", 1000);
+  Serial.print(F("Loaded initial_run_time: "));
+  Serial.println(initialRuntimeMs);
   preferences.end();
 
   WiFi.onEvent(onWiFiEvent);
@@ -670,6 +696,8 @@ void setup() {
   wm_pin_number.setValue(pinNumberStr.c_str(), 2);
   String runtimeMsStr = String(runtimeMs);
   wm_run_time.setValue(runtimeMsStr.c_str(), 6);
+  String initialRuntimeMsStr = String(initialRuntimeMs);
+  wm_initial_run_time.setValue(initialRuntimeMsStr.c_str(), 6);
 
   // Initialize WiFiManager
   WiFiManager wm;
@@ -685,6 +713,7 @@ void setup() {
   wm.addParameter(&wm_niot_unit);
   wm.addParameter(&wm_pin_number);
   wm.addParameter(&wm_run_time);
+  wm.addParameter(&wm_initial_run_time);
 
   // Set timeout for configuration portal
   wm.setConfigPortalTimeout(180); // 3 minutes timeout
