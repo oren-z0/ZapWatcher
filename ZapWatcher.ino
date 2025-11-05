@@ -19,7 +19,7 @@
 #define MAX_UPTIME_MS (6UL * 60UL * 60UL * 1000UL)
 #define WIFI_DEAD_MS (5UL * 60UL * 1000UL) // 5 minutes without WiFi
 #define RECONNECT_TIMEOUT_MS (2UL * 60UL * 60UL * 1000UL) // 2 hours to reconnect to relays
-#define ZAP_RESUBSCRIBE_TIMEOUT_MS (2UL * 60UL * 1000UL) // Will subscribe to kind0
+#define ZAP_RESUBSCRIBE_TIMEOUT_MS (20UL * 1000UL) // Will resubscribe to zaps
 #define MAX_ZAP_SUBSCRIPTION_ATTEMPTS (4)
 
 #define ZAP_SUBSCRIBING_STATE_IDLE (0)
@@ -66,6 +66,7 @@ int minExpectedRelays = 0;
 unsigned long lastZapSubscriptionAttemptMs = 0;
 int zapSubscribeAttempts = 0;
 int zapSubscribingState = ZAP_SUBSCRIBING_STATE_IDLE;
+bool zapSubscribed = false;
 
 bool savedNewParams = false;
 WiFiManager* wm_ptr = nullptr;
@@ -338,6 +339,14 @@ void kind0Event(const std::string& key, const char* payload) {
       if (zapSubscribingState == ZAP_SUBSCRIBING_STATE_SUBSCRIBING) {
         Serial.println(F("EOSE event, assuming subscribed succesfully to zap events"));
         zapSubscribingState = ZAP_SUBSCRIBING_STATE_SUBSCRIBED;
+        if (!zapSubscribed) {
+          Serial.print(F("Running initial runtime: "));
+          Serial.println(initialRuntimeMs);
+          if (initialRuntimeMs > 0) {
+            runPin(initialRuntimeMs);
+          }
+          zapSubscribed = true;
+        }
       }
       return;
     }
@@ -357,7 +366,6 @@ void kind0Event(const std::string& key, const char* payload) {
     Serial.println(F("Event is not newer than previous kind0 event"));
     return;
   }
-  bool isInitialEvent = (kind0CreatedAt == 0);
   kind0CreatedAt = createdAtLong;
 
   JsonVariantConst content = kind0Doc[2]["content"];
@@ -407,11 +415,6 @@ void kind0Event(const std::string& key, const char* payload) {
   Serial.print(F("New wallet nostr pubkey: "));
   Serial.println(nostrWalletPubkey);
   subscribeToZaps();
-  if (isInitialEvent && (initialRuntimeMs > 0)) {
-    Serial.print(F("Running initial runtime: "));
-    Serial.println(initialRuntimeMs);
-    runPin(initialRuntimeMs);
-  }
 }
 
 void kind9735Event(const std::string& key, const char* payload) {
@@ -656,6 +659,7 @@ void setup() {
   kind0CreatedAt = 0;
   kind9735CreatedAt = 0;
   zapSubscribingState = ZAP_SUBSCRIBING_STATE_IDLE;
+  zapSubscribed = false;
   savedNewParams = false;
 
   preferences.begin("config", true);
