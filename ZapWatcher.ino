@@ -15,11 +15,11 @@
 
 #define MIN_RELAYS (2)
 #define INVALID_PIN_NUMBER (0xFFFF)
-#define MAX_HTTP_RETRIES (600)
-#define MAX_UPTIME_MS (6UL * 60UL * 60UL * 1000UL)
-#define WIFI_DEAD_MS (5UL * 60UL * 1000UL) // 5 minutes without WiFi
-#define RECONNECT_TIMEOUT_MS (2UL * 60UL * 60UL * 1000UL) // 2 hours to reconnect to relays
-#define ZAP_RESUBSCRIBE_TIMEOUT_MS (20UL * 1000UL) // Will resubscribe to zaps
+#define MAX_HTTP_RETRIES (100)
+#define MAX_UPTIME_MS (24UL * 60UL * 60UL * 1000UL) // Restart every 24 hours
+#define WIFI_DEAD_MS (5UL * 60UL * 1000UL) // Restart after 5 minutes without WiFi
+#define RECONNECT_TIMEOUT_MS (4UL * 60UL * 60UL * 1000UL) // Reconnect to relays every 4 hours
+#define ZAP_RESUBSCRIBE_TIMEOUT_MS (20UL * 1000UL) // Try to resubscribe to zaps every 20 seconds
 #define MAX_ZAP_SUBSCRIPTION_ATTEMPTS (4)
 
 #define ZAP_SUBSCRIBING_STATE_IDLE (0)
