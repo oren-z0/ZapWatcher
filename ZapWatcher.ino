@@ -11,11 +11,13 @@
 #include <vector>  // Add this for std::vector
 #include <WiFiManager.h>  // https://github.com/tzapu/WiFiManager
 
+#include "esp_task_wdt.h"
+
 #define ZAPWATCHER_VERSION (4)
 
 #define MIN_RELAYS (2)
 #define INVALID_PIN_NUMBER (0xFFFF)
-#define MAX_HTTP_RETRIES (100)
+#define MAX_HTTP_RETRIES (10)
 #define MAX_UPTIME_MS (24UL * 60UL * 60UL * 1000UL) // Restart every 24 hours
 #define WIFI_DEAD_MS (5UL * 60UL * 1000UL) // Restart after 5 minutes without WiFi
 #define RECONNECT_TIMEOUT_MS (4UL * 60UL * 60UL * 1000UL) // Reconnect to relays every 4 hours
@@ -23,8 +25,9 @@
 #define MAX_ZAP_SUBSCRIPTION_ATTEMPTS (4)
 
 #define ZAP_SUBSCRIBING_STATE_IDLE (0)
-#define ZAP_SUBSCRIBING_STATE_SUBSCRIBING (1)
-#define ZAP_SUBSCRIBING_STATE_SUBSCRIBED (2)
+#define ZAP_SUBSCRIBING_STATE_CAN_SUBSCRIBE (1)
+#define ZAP_SUBSCRIBING_STATE_SUBSCRIBING (2)
+#define ZAP_SUBSCRIBING_STATE_SUBSCRIBED (3)
 
 // Define custom parameters
 WiFiManagerParameter wm_nostr_relays("nostr_relays", "Relays (Separate by space, no wss:// prefix)", "", 200);
@@ -66,10 +69,16 @@ int minExpectedRelays = 0;
 unsigned long lastZapSubscriptionAttemptMs = 0;
 int zapSubscribeAttempts = 0;
 int zapSubscribingState = ZAP_SUBSCRIBING_STATE_IDLE;
-bool zapSubscribed = false;
+bool initialRunExecuted = false;
+bool shouldRunPin = false;
 
 bool savedNewParams = false;
 WiFiManager* wm_ptr = nullptr;
+
+inline void runYield() {
+  yield();
+  esp_task_wdt_reset();
+}
 
 String npubToHex(const String& npub) {
   // Remove "npub" prefix if present
@@ -86,6 +95,10 @@ String npubToHex(const String& npub) {
   int dataLen = 0;
 
   for (int i = 4; i < npub.length(); i++) {
+    // Feed the watchdog
+    if ((i & 0x0F) == 0) {
+      runYield();
+    }
     char c = npub[i];
     for (int j = 0; j < bech32Len; j++) {
       if (bech32Chars[j] == c) {
@@ -102,6 +115,9 @@ String npubToHex(const String& npub) {
   int bitsInBuffer = 0;
 
   for (int i = 0; (i < dataLen) && (byteLen < 32); i++) {
+    if ((i & 0x0F) == 0) {
+      runYield();
+    }
     bitBuffer = (bitBuffer << 5) | data[i];
     bitsInBuffer += 5;
     while ((bitsInBuffer >= 8) && (byteLen < 32)) {
@@ -114,6 +130,9 @@ String npubToHex(const String& npub) {
   // Convert bytes to hex
   String hex = "";
   for (int i = 0; i < byteLen; i++) {
+    if ((i & 0x0F) == 0) {
+      runYield();
+    }
     char hexChars[3];
     sprintf(hexChars, "%02x", bytes[i]);
     hex += hexChars;
@@ -190,6 +209,8 @@ void onSaveParams() {
 }
 
 void subscribeToZaps() {
+  // Feed the watchdog
+  runYield();
   lastZapSubscriptionAttemptMs = millis();
   zapSubscribingState = ZAP_SUBSCRIBING_STATE_SUBSCRIBING;
   // assumes nostrWalletPubkey and nostrRecipientPubkey are set
@@ -257,6 +278,8 @@ void onWiFiEvent(system_event_id_t event) {
 }
 
 void okEvent(const std::string& key, const char* payload) {
+  // Feed the watchdog
+  runYield();
   Serial.println(F("OK event, payload is: "));
   Serial.println(payload);
 }
@@ -271,6 +294,11 @@ String getNostrWalletPubkey(const String& domain, const String& username) {
   StaticJsonDocument<4098> responseDoc;
   int httpAttempt = 0;
   for (; httpAttempt < MAX_HTTP_RETRIES; httpAttempt++) {
+    // Feed the watchdog
+    runYield();
+    if (httpAttempt > 0) {
+      delay(500);
+    }
     HTTPClient http;
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.begin(url);
@@ -286,6 +314,8 @@ String getNostrWalletPubkey(const String& domain, const String& username) {
     }
 
     DeserializationError error = deserializeJson(responseDoc, http.getStream());
+    // Feed the watchdog
+    runYield();
     http.end();
     if (error) {
       Serial.print(F("http response deserializeJson() failed: "));
@@ -297,6 +327,7 @@ String getNostrWalletPubkey(const String& domain, const String& username) {
   }
   if (httpAttempt >= MAX_HTTP_RETRIES) {
     Serial.println(F("Failed to get nostr pubkey"));
+    delay(200);
     ESP.restart();
     delay(5000);
     return "";
@@ -315,11 +346,16 @@ String getNostrWalletPubkey(const String& domain, const String& username) {
 }
 
 void kind0Event(const std::string& key, const char* payload) {
+  // Feed the watchdog
+  runYield();
+
   Serial.print(F("Kind 0 event, payload is: "));
   Serial.println(payload);
 
   StaticJsonDocument<4098> kind0Doc;
   DeserializationError error = deserializeJson(kind0Doc, payload);
+  // Feed the watchdog
+  runYield();
 
   if (error) {
     Serial.print(F("event deserializeJson() failed: "));
@@ -339,14 +375,6 @@ void kind0Event(const std::string& key, const char* payload) {
       if (zapSubscribingState == ZAP_SUBSCRIBING_STATE_SUBSCRIBING) {
         Serial.println(F("EOSE event, assuming subscribed succesfully to zap events"));
         zapSubscribingState = ZAP_SUBSCRIBING_STATE_SUBSCRIBED;
-        if (!zapSubscribed) {
-          Serial.print(F("Running initial runtime: "));
-          Serial.println(initialRuntimeMs);
-          if (initialRuntimeMs > 0) {
-            runPin(initialRuntimeMs);
-          }
-          zapSubscribed = true;
-        }
       }
       return;
     }
@@ -379,6 +407,8 @@ void kind0Event(const std::string& key, const char* payload) {
   StaticJsonDocument<4098> contentDoc;
 
   error = deserializeJson(contentDoc, content.as<const char*>());
+  // Feed the watchdog
+  runYield();
 
   if (error) {
     Serial.print(F("content deserializeJson() failed: "));
@@ -414,14 +444,20 @@ void kind0Event(const std::string& key, const char* payload) {
   nostrWalletPubkey = newNostrWalletPubkey;
   Serial.print(F("New wallet nostr pubkey: "));
   Serial.println(nostrWalletPubkey);
-  subscribeToZaps();
+  if (zapSubscribingState < ZAP_SUBSCRIBING_STATE_CAN_SUBSCRIBE) {
+    zapSubscribingState = ZAP_SUBSCRIBING_STATE_CAN_SUBSCRIBE;
+  }
 }
 
 void kind9735Event(const std::string& key, const char* payload) {
+  // Feed the watchdog
+  runYield();
   Serial.print(F("Kind 9735 event. payload is: "));
   Serial.println(payload);
   StaticJsonDocument<4098> kind9735Doc;
   DeserializationError error = deserializeJson(kind9735Doc, payload);
+  // Feed the watchdog
+  runYield();
 
   if (error) {
     Serial.print(F("kind9735Event: event deserializeJson() failed: "));
@@ -477,6 +513,8 @@ void kind9735Event(const std::string& key, const char* payload) {
       if (tag[1].is<const char*>()) {
         StaticJsonDocument<4098> zapRequest;
         error = deserializeJson(zapRequest, tag[1].as<const char*>());
+        // Feed the watchdog
+        runYield();
         // We don't verify the entire format & signature of the zap request.
         if (!error) {
           if (!foundSender && zapRequest["pubkey"].is<const char*>()) {
@@ -489,6 +527,8 @@ void kind9735Event(const std::string& key, const char* payload) {
             Serial.println(zapRequest["content"].as<const char*>());
             StaticJsonDocument<200> zapRequestContent;
             error = deserializeJson(zapRequestContent, zapRequest["content"].as<const char*>());
+            // Feed the watchdog
+            runYield();
             if (!error) {
               if (zapRequestContent["triggerId"].is<const char*>() && (strcmp(zapRequestContent["triggerId"], niotTriggerId.c_str()) == 0)) {
                 foundTriggerId = true;
@@ -538,6 +578,10 @@ void kind9735Event(const std::string& key, const char* payload) {
   long amountMsats = 0;
   int bolt11Offset = 4;
   for (bolt11Offset = 4; bolt11Offset < bolt11Str.length(); bolt11Offset++) {
+    if ((bolt11Offset & 0x0F) == 0) {
+      // Feed the watchdog
+      runYield();
+    }
     char c = bolt11Str[bolt11Offset];
     if (c >= '0' && c <= '9') {
       amountMsats = amountMsats * 10 + (c - '0');
@@ -588,11 +632,7 @@ void kind9735Event(const std::string& key, const char* payload) {
   }
   kind9735CreatedAt = createdAtLong;
 
-  Serial.print(F("kind9735Event: Running runtime: "));
-  Serial.println(runtimeMs);
-  if (runtimeMs > 0) {
-    runPin(runtimeMs);
-  }
+  shouldRunPin = true;
 }
 
 bool shouldForceConfigPortal() {
@@ -632,6 +672,8 @@ void runPin(unsigned long ms) {
 }
 
 void requestKind0() {
+  // Feed the watchdog
+  runYield();
   NostrRequestOptions* eventRequestOptions = new NostrRequestOptions();
 
   String authors[1];
@@ -651,6 +693,18 @@ void requestKind0() {
 
 void setup() {
   Serial.begin(115200);
+
+  // Increase watchdog timeout to 30 seconds
+  esp_task_wdt_deinit();
+
+  esp_task_wdt_config_t twdt_config = {
+    .timeout_ms = 60000,  // 60 seconds in milliseconds
+    .idle_core_mask = (1 << CONFIG_FREERTOS_NUMBER_OF_CORES) - 1,  // Monitor all cores
+    .trigger_panic = true  // Trigger panic on timeout
+  };
+  esp_task_wdt_init(&twdt_config);
+  esp_task_wdt_add(NULL);
+
   delay(1000);
   Serial.println(F("setup"));
 
@@ -659,7 +713,8 @@ void setup() {
   kind0CreatedAt = 0;
   kind9735CreatedAt = 0;
   zapSubscribingState = ZAP_SUBSCRIBING_STATE_IDLE;
-  zapSubscribed = false;
+  initialRunExecuted = false;
+  shouldRunPin = false;
   savedNewParams = false;
 
   preferences.begin("config", true);
@@ -667,6 +722,8 @@ void setup() {
   // Split the string into a vector
   int startIndex = 0;
   for (int i = 0; i <= nostrRelaysStr.length(); i++) {
+    // Feed the watchdog
+    runYield();
     if (i == nostrRelaysStr.length() || nostrRelaysStr[i] == ' ') {
       if (startIndex < i) {
         nostrRelaysVector.push_back(nostrRelaysStr.substring(startIndex, i));
@@ -791,6 +848,8 @@ void setup() {
   time_t now = 0;
   int tries = 0;
   while (now < 1700000000 && tries < 30) { // ~2023-11-14
+    // Feed the watchdog
+    runYield();
     delay(500);
     time(&now);
     Serial.print(F("NTP time: "));
@@ -825,11 +884,12 @@ void setup() {
   digitalWrite(pinNumber, LOW);
   lastWiFiOkMs = millis();
   lastRelayReconnectMs = lastWiFiOkMs;
-  lastZapSubscriptionAttemptMs = lastWiFiOkMs;
+  lastZapSubscriptionAttemptMs = 0;
   zapSubscribeAttempts = 0;
 }
 
 void loop() {
+  runYield();
   // Retrieve stored parameters
   nostrRelayManager.loop();
   nostrRelayManager.broadcastEvents();
@@ -853,23 +913,45 @@ void loop() {
     return;
   }
   bool shouldReconnect = false;
-  if (now - lastRelayReconnectMs > RECONNECT_TIMEOUT_MS) {
+  if (!initialRunExecuted && (zapSubscribingState == ZAP_SUBSCRIBING_STATE_SUBSCRIBED)) {
+    Serial.print(F("Running initial runtime: "));
+    Serial.println(initialRuntimeMs);
+    if (initialRuntimeMs > 0) {
+      runPin(initialRuntimeMs);
+    }
+    initialRunExecuted = true;
+  } else if (shouldRunPin) {
+    shouldRunPin = false;
+    Serial.print(F("Running runtime: "));
+    Serial.println(runtimeMs);
+    if (runtimeMs > 0) {
+      runPin(runtimeMs);
+    }
+  } else if (now - lastRelayReconnectMs > RECONNECT_TIMEOUT_MS) {
     Serial.println(F("[Health] Relay reconnect timeout -> reconnecting"));
     shouldReconnect = true;
-  } else if ((zapSubscribingState != ZAP_SUBSCRIBING_STATE_SUBSCRIBED) && (now - lastZapSubscriptionAttemptMs > ZAP_RESUBSCRIBE_TIMEOUT_MS)) {
+  } else if (
+    (zapSubscribingState != ZAP_SUBSCRIBING_STATE_SUBSCRIBED) &&
+    (zapSubscribingState >= ZAP_SUBSCRIBING_STATE_CAN_SUBSCRIBE) &&
+    (now - lastZapSubscriptionAttemptMs > ZAP_RESUBSCRIBE_TIMEOUT_MS)
+  ) {
     if (zapSubscribeAttempts >= MAX_ZAP_SUBSCRIPTION_ATTEMPTS) {
       Serial.println(F("[Health] Too many zap subscription attempts -> reconnecting"));
       shouldReconnect = true;
     } else {
       Serial.println(F("[Health] Trying to resubscribe to zap events"));
+      // keep shouldReconnect false
       subscribeToZaps();
       zapSubscribeAttempts++;
     }
   }
   if (shouldReconnect) {
     nostrRelayManager.disconnect(); // already has internal delay
+    runYield();
     nostrRelayManager.connect();
-    subscribeToZaps();
+    if (zapSubscribingState >= ZAP_SUBSCRIBING_STATE_CAN_SUBSCRIBE) {
+      subscribeToZaps();
+    }
     zapSubscribeAttempts = 0;
     lastRelayReconnectMs = millis();
   }
