@@ -20,7 +20,7 @@
 #define MAX_HTTP_RETRIES (10)
 #define MAX_UPTIME_MS (24UL * 60UL * 60UL * 1000UL) // Restart every 24 hours
 #define WIFI_DEAD_MS (5UL * 60UL * 1000UL) // Restart after 5 minutes without WiFi
-#define RECONNECT_TIMEOUT_MS (4UL * 60UL * 60UL * 1000UL) // Reconnect to relays every 4 hours
+#define RECONNECT_TIMEOUT_MS (10UL * 60UL * 60UL * 1000UL) // Reconnect to relays every 10 hours
 #define ZAP_RESUBSCRIBE_TIMEOUT_MS (20UL * 1000UL) // Try to resubscribe to zaps every 20 seconds
 #define MAX_ZAP_SUBSCRIPTION_ATTEMPTS (4)
 
