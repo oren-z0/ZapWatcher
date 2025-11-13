@@ -71,6 +71,7 @@ int zapSubscribeAttempts = 0;
 int zapSubscribingState = ZAP_SUBSCRIBING_STATE_IDLE;
 bool initialRunExecuted = false;
 bool shouldRunPin = false;
+unsigned long pinEndTime = 0;
 
 bool savedNewParams = false;
 WiFiManager* wm_ptr = nullptr;
@@ -78,6 +79,16 @@ WiFiManager* wm_ptr = nullptr;
 inline void runYield() {
   yield();
   esp_task_wdt_reset();
+}
+
+inline void restart() {
+  if (pinEndTime > 0) {
+    digitalWrite(pinNumber, LOW);
+    pinEndTime = 0;
+  }
+  delay(200);
+  ESP.restart();
+  delay(5000);
 }
 
 String npubToHex(const String& npub) {
@@ -255,9 +266,7 @@ void onWiFiEvent(system_event_id_t event) {
       // re-connect relays after WiFi returns
       if (nostrWalletPubkey.length() > 0 && nostrRecipientPubkey.length() > 0) {
         Serial.println(F("[WiFi] IP received after nostr subscription - restarting"));
-        delay(200);
-        ESP.restart();
-        delay(5000);
+        restart();
       } else {
         Serial.println(F("[WiFi] No nostr wallet or recipient pubkey, this is the initial ip."));
       }
@@ -268,9 +277,7 @@ void onWiFiEvent(system_event_id_t event) {
     case SYSTEM_EVENT_STA_DISCONNECTED:
 #endif
       Serial.println(F("[WiFi] Disconnected -> restarting"));
-      delay(200);
-      ESP.restart();
-      delay(5000);
+      restart();
       break;
     default:
       break;
@@ -327,9 +334,7 @@ String getNostrWalletPubkey(const String& domain, const String& username) {
   }
   if (httpAttempt >= MAX_HTTP_RETRIES) {
     Serial.println(F("Failed to get nostr pubkey"));
-    delay(200);
-    ESP.restart();
-    delay(5000);
+    restart();
     return "";
   }
   nostrRelayManager.connect();
@@ -664,11 +669,14 @@ bool shouldForceConfigPortal() {
 }
 
 void runPin(unsigned long ms) {
+  unsigned long now = millis();
+  pinEndTime = now + ms;
+  if ((pinEndTime == 0) || (pinEndTime < now)) {
+    // overflow ?
+    pinEndTime = 0;
+    return;
+  }
   digitalWrite(pinNumber, HIGH);
-  delay(ms);
-  digitalWrite(pinNumber, LOW);
-  lastWiFiOkMs = millis();
-  lastRelayReconnectMs = lastWiFiOkMs;
 }
 
 void requestKind0() {
@@ -715,6 +723,7 @@ void setup() {
   zapSubscribingState = ZAP_SUBSCRIBING_STATE_IDLE;
   initialRunExecuted = false;
   shouldRunPin = false;
+  pinEndTime = 0;
   savedNewParams = false;
 
   preferences.begin("config", true);
@@ -820,8 +829,7 @@ void setup() {
     WiFi.persistent(false);
     Serial.println(F("Restarting to reload new params after forced startConfigPortal..."));
     delay(1000);
-    ESP.restart();
-    delay(5000);
+    restart();
     return;
   } else {
     Serial.println(F("Auto connecting to WiFi"));
@@ -829,16 +837,12 @@ void setup() {
     WiFi.persistent(false);
     if (!connected) {
       Serial.println(F("Failed to connect or hit timeout. Restarting..."));
-      delay(3000);
-      ESP.restart();
-      delay(5000);
+      restart();
       return;
     }
     if (savedNewParams) {
       Serial.println(F("Restarting to reload new params after new params saved..."));
-      delay(1000);
-      ESP.restart();
-      delay(5000);
+      restart();
       return;
     }
   }
@@ -857,9 +861,7 @@ void setup() {
   }
   if (now < 1700000000) {
     Serial.println(F("Failed to get NTP time"));
-    delay(1000);
-    ESP.restart();
-    delay(5000);
+    restart();
     return;
   }
 
@@ -898,18 +900,21 @@ void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     lastWiFiOkMs = now;
   }
-  if (now - bootMs > MAX_UPTIME_MS) {
+  if ((pinEndTime > 0) && (now >= pinEndTime)) {
+    Serial.println(F("[Health] Pin end time reached"));
+    digitalWrite(pinNumber, LOW);
+    pinEndTime = 0;
+    // Got zap? no need to reconnect.
+    lastRelayReconnectMs = now;
+  }
+  if ((pinEndTime == 0) && (now - bootMs > MAX_UPTIME_MS)) {
     Serial.println(F("[Health] Max uptime reached"));
-    delay(200);
-    ESP.restart();
-    delay(5000);
+    restart();
     return;
   }
-  if (now - lastWiFiOkMs > WIFI_DEAD_MS) {
+  if ((pinEndTime == 0) && (now - lastWiFiOkMs > WIFI_DEAD_MS)) {
     Serial.println(F("[Health] WiFi dead too long -> restarting"));
-    delay(200);
-    ESP.restart();
-    delay(5000);
+    restart();
     return;
   }
   bool shouldReconnect = false;
@@ -921,6 +926,7 @@ void loop() {
     }
     initialRunExecuted = true;
   } else if (shouldRunPin) {
+    // Will extend execution if pinEndTime is already set.
     shouldRunPin = false;
     Serial.print(F("Running runtime: "));
     Serial.println(runtimeMs);
@@ -945,7 +951,7 @@ void loop() {
       zapSubscribeAttempts++;
     }
   }
-  if (shouldReconnect) {
+  if ((pinEndTime == 0) && shouldReconnect) { // don't reconnect if pin is running
     nostrRelayManager.disconnect(); // already has internal delay
     runYield();
     nostrRelayManager.connect();
