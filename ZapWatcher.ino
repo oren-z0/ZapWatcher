@@ -13,7 +13,7 @@
 
 #include "esp_task_wdt.h"
 
-#define ZAPWATCHER_VERSION (4)
+#define ZAPWATCHER_VERSION (5)
 
 #define MIN_RELAYS (2)
 #define INVALID_PIN_NUMBER (0xFFFF)
@@ -49,6 +49,7 @@ NostrRelayManager nostrRelayManager;
 
 String nostrRecipientPubkey = "";
 String nostrWalletPubkey = "";
+String lud16Str = "";
 long nostrMinZap = 0;
 String nostrSenderNpub = "";
 String nostrSenderPubkey = "";
@@ -427,31 +428,10 @@ void kind0Event(const std::string& key, const char* payload) {
     return;
   }
 
-  String lud16Str = String(lud16);
+  lud16Str = String(lud16);
 
   Serial.print(F("lud16Str: "));
   Serial.println(lud16Str);
-
-  int at_index = lud16Str.indexOf('@');
-  if (at_index < 0) {
-    Serial.println(F("No @ found in lud16"));
-    return;
-  }
-
-  String username = lud16Str.substring(0, at_index);
-  String domain = lud16Str.substring(at_index + 1);
-
-  String newNostrWalletPubkey = getNostrWalletPubkey(domain, username);
-  if (newNostrWalletPubkey.length() == 0) {
-    Serial.println(F("No new wallet nostr pubkey, skipping"));
-    return;
-  }
-  nostrWalletPubkey = newNostrWalletPubkey;
-  Serial.print(F("New wallet nostr pubkey: "));
-  Serial.println(nostrWalletPubkey);
-  if (zapSubscribingState < ZAP_SUBSCRIBING_STATE_CAN_SUBSCRIBE) {
-    zapSubscribingState = ZAP_SUBSCRIBING_STATE_CAN_SUBSCRIBE;
-  }
 }
 
 void kind9735Event(const std::string& key, const char* payload) {
@@ -718,6 +698,7 @@ void setup() {
 
   bootMs = millis();
   nostrWalletPubkey = "";
+  lud16Str = "";
   kind0CreatedAt = 0;
   kind9735CreatedAt = 0;
   zapSubscribingState = ZAP_SUBSCRIBING_STATE_IDLE;
@@ -813,7 +794,7 @@ void setup() {
   wm.addParameter(&wm_initial_run_time);
 
   // Set timeout for configuration portal
-  wm.setConfigPortalTimeout(180); // 3 minutes timeout
+  wm.setConfigPortalTimeout(600); // 10 minutes timeout
   wm.setConnectRetries(3);
   wm.setSaveParamsCallback(onSaveParams);
 
@@ -896,6 +877,31 @@ void loop() {
   nostrRelayManager.loop();
   nostrRelayManager.broadcastEvents();
   delay(50);
+  if (lud16Str.length() > 0) {
+    int atIndex = lud16Str.indexOf('@');
+    if (atIndex < 0) {
+      lud16Str = "";
+      Serial.println(F("No @ found in lud16"));
+      return;
+    }
+    String username = lud16Str.substring(0, atIndex);
+    String domain = lud16Str.substring(atIndex + 1);
+    lud16Str = "";
+
+    String newNostrWalletPubkey = getNostrWalletPubkey(domain, username);
+    if (newNostrWalletPubkey.length() == 0) {
+      Serial.println(F("No new wallet nostr pubkey, skipping"));
+      return;
+    }
+    nostrWalletPubkey = newNostrWalletPubkey;
+    Serial.print(F("New wallet nostr pubkey: "));
+    Serial.println(nostrWalletPubkey);
+    if (zapSubscribingState < ZAP_SUBSCRIBING_STATE_CAN_SUBSCRIBE) {
+      zapSubscribingState = ZAP_SUBSCRIBING_STATE_CAN_SUBSCRIBE;
+    }
+    return;
+  }
+
   unsigned long now = millis();
   if (WiFi.status() == WL_CONNECTED) {
     lastWiFiOkMs = now;
